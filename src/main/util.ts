@@ -33,13 +33,28 @@ export function scanVideoDir(dir: string, maxDepth = 3): string[] {
 }
 
 /**
+ * Args chất lượng theo họ encoder:
+ * - libx264/libx265: -crf
+ * - NVENC: cần '-rc vbr -cq N -b:v 0' (thiếu -b:v 0 sẽ bị kẹp bitrate mặc định ~2Mbps)
+ * - QSV/AMF: không có -cq, dùng -q:v
+ */
+export function encoderQualityArgs(enc: string, q = 19): string[] {
+  if (enc === 'libx264' || enc === 'libx265') return ['-preset', 'veryfast', '-crf', String(q)]
+  if (enc.includes('nvenc')) return ['-rc', 'vbr', '-cq', String(q), '-b:v', '0']
+  return ['-q:v', String(q)]
+}
+
+/** Codec audio copy được vào container .mp4 an toàn */
+export const MP4_SAFE_AUDIO = new Set(['aac', 'mp3', 'ac3', 'eac3', 'alac', 'mp2'])
+
+/**
  * Sinh đường dẫn output: <dir>/<tên gốc><suffix>.<ext>, tự tránh ghi đè bằng " (n)".
  * dir rỗng → cùng thư mục file gốc (spec 5.5 — cùng ổ đĩa, tránh copy chéo ổ).
  */
 export function deriveOutput(input: string, suffix: string, outDir?: string, ext?: string): string {
   const dir = outDir && outDir.trim() ? outDir : path.dirname(input)
   const base = path.basename(input, path.extname(input))
-  const e = ext ?? path.extname(input) ?? '.mp4'
+  const e = ext ?? (path.extname(input) || '.mp4')
   let candidate = path.join(dir, `${base}${suffix}${e}`)
   let i = 1
   while (fs.existsSync(candidate)) {

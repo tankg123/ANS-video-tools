@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
+import { encoderQualityArgs } from '../util'
 import type {
   IntroOutroLogoStartPayload,
   IntroOutroLogoStartResult,
@@ -71,7 +72,7 @@ export default function register(ctx: ModuleContext): void {
     if (outroInfo && !outroInfo.audio) throw new Error('Outro cần có audio để ghép với video chính')
 
     const enc = await ctx.pickEncoder('h264')
-    const encArgs = enc === 'libx264' ? ['-preset', 'veryfast', '-crf', '18'] : ['-cq', '19']
+    const encArgs = encoderQualityArgs(enc, 18)
 
     // ---- Giai đoạn 1: probe + build args cho TẤT CẢ video chính (lỗi thì không enqueue gì) ----
     const jobs: { title: string; args: string[]; durationSec: number; output: string }[] = []

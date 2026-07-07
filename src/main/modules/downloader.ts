@@ -106,6 +106,7 @@ export default function register(ctx: ModuleContext): void {
       let lastError = ''
       let settled = false
       const { child } = ctx.pm.spawnManaged(bin, args, {
+        tag: 'download', // KILL ALL không giết lượt lấy metadata
         onLine: (line, stream) => {
           if (stream === 'out') outLines.push(line)
           else if (/ERROR/i.test(line)) lastError = line.replace(/^ERROR:\s*/i, '').trim()

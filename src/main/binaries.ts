@@ -3,6 +3,9 @@ import { execFile, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { bundledBinDir, downloadedBinDir } from './env'
 import type { BinsStatus } from '@shared/types'
 import { queue } from './task-queue'
@@ -65,30 +68,33 @@ export function binVersion(tool: BinTool): Promise<string | null> {
 async function downloadToFile(
   url: string,
   dest: string,
-  onProgress: (pct: number, note: string) => void
+  onProgress: (pct: number, note: string) => void,
+  signal?: AbortSignal
 ): Promise<void> {
-  const res = await net.fetch(url)
+  const res = await net.fetch(url, signal ? { signal } : undefined)
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} khi tải ${url}`)
   const total = Number(res.headers.get('content-length') ?? 0)
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   const tmp = dest + '.part'
   const out = fs.createWriteStream(tmp)
-  const reader = res.body.getReader()
+  const body = Readable.fromWeb(res.body as unknown as WebReadableStream<Uint8Array>)
   let received = 0
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      received += value.byteLength
-      if (!out.write(Buffer.from(value))) {
-        await new Promise((r) => out.once('drain', r))
-      }
-      if (total > 0) {
-        onProgress((received / total) * 100, `${Math.round(received / 1048576)} MB`)
-      }
+  body.on('data', (chunk: Buffer) => {
+    received += chunk.byteLength
+    if (total > 0) {
+      onProgress((received / total) * 100, `${Math.round(received / 1048576)} MB`)
     }
-  } finally {
-    await new Promise((r) => out.end(r))
+  })
+  try {
+    // pipeline xử lý backpressure + lỗi của cả 2 stream (ENOSPC/EPERM/abort không crash main)
+    await pipeline(body, out)
+  } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true }) // dọn file .part dở dang
+    } catch {
+      /* ignore */
+    }
+    throw err
   }
   fs.renameSync(tmp, dest)
 }
@@ -103,49 +109,12 @@ export function enqueueFetchBinaries(): string {
     title: 'Tải FFmpeg + yt-dlp',
     pool: 'misc',
     run: async (api) => {
-      fs.mkdirSync(downloadedBinDir, { recursive: true })
-
-      if (!resolveBin('yt-dlp')) {
-        api.update({ detail: 'yt-dlp.exe', progress: 0 })
-        await downloadToFile(
-          'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe',
-          path.join(downloadedBinDir, 'yt-dlp.exe'),
-          (pct, note) => api.update({ progress: pct * 0.2, detail: `yt-dlp.exe ${note}` })
-        )
-      }
-
-      if (!resolveBin('ffmpeg') || !resolveBin('ffprobe')) {
-        const zipPath = path.join(os.tmpdir(), 'vt-ffmpeg-essentials.zip')
-        await downloadToFile(
-          'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',
-          zipPath,
-          (pct, note) => api.update({ progress: 20 + pct * 0.7, detail: `ffmpeg.zip ${note}` })
-        )
-        api.update({ progress: 92, detail: 'Đang giải nén...' })
-        const extractDir = path.join(os.tmpdir(), 'vt-ffmpeg-extract')
-        await new Promise<void>((resolve, reject) => {
-          execFile(
-            'powershell',
-            [
-              '-NoProfile',
-              '-Command',
-              `Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${extractDir}' -Force`
-            ],
-            { windowsHide: true, timeout: 180000 },
-            (err) => (err ? reject(err) : resolve())
-          )
-        })
-        const stack = [extractDir]
-        while (stack.length) {
-          const dir = stack.pop()!
-          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const p = path.join(dir, entry.name)
-            if (entry.isDirectory()) stack.push(p)
-            else if (entry.name === 'ffmpeg.exe' || entry.name === 'ffprobe.exe') {
-              fs.copyFileSync(p, path.join(downloadedBinDir, entry.name))
-            }
-          }
-        }
+      const ac = new AbortController()
+      // user bấm dừng → abort fetch đang chạy; các bước sau kiểm tra isCancelled để thoát sớm
+      api.setCancelHook(() => ac.abort())
+      const zipPath = path.join(os.tmpdir(), 'vt-ffmpeg-essentials.zip')
+      const extractDir = path.join(os.tmpdir(), 'vt-ffmpeg-extract')
+      const cleanTemp = (): void => {
         try {
           fs.rmSync(zipPath, { force: true })
           fs.rmSync(extractDir, { recursive: true, force: true })
@@ -154,10 +123,75 @@ export function enqueueFetchBinaries(): string {
         }
       }
 
-      clearBinCache()
-      const st = binsStatus()
-      if (!st.ffmpeg || !st.ytdlp) throw new Error('Tải binaries chưa hoàn tất — kiểm tra mạng rồi thử lại')
-      api.update({ progress: 100, detail: 'Hoàn tất' })
+      try {
+        fs.mkdirSync(downloadedBinDir, { recursive: true })
+
+        if (!resolveBin('yt-dlp')) {
+          api.update({ detail: 'yt-dlp.exe', progress: 0 })
+          await downloadToFile(
+            'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe',
+            path.join(downloadedBinDir, 'yt-dlp.exe'),
+            (pct, note) => api.update({ progress: pct * 0.2, detail: `yt-dlp.exe ${note}` }),
+            ac.signal
+          )
+        }
+        if (api.isCancelled()) return // huỷ êm — queue tự đánh dấu killed
+
+        if (!resolveBin('ffmpeg') || !resolveBin('ffprobe')) {
+          await downloadToFile(
+            'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',
+            zipPath,
+            (pct, note) => api.update({ progress: 20 + pct * 0.7, detail: `ffmpeg.zip ${note}` }),
+            ac.signal
+          )
+          if (api.isCancelled()) {
+            cleanTemp()
+            return
+          }
+          api.update({ progress: 92, detail: 'Đang giải nén...' })
+          // escape dấu nháy đơn cho chuỗi single-quote PowerShell (nhân đôi ')
+          const psq = (p: string): string => p.replace(/'/g, "''")
+          await new Promise<void>((resolve, reject) => {
+            execFile(
+              'powershell',
+              [
+                '-NoProfile',
+                '-Command',
+                `Expand-Archive -LiteralPath '${psq(zipPath)}' -DestinationPath '${psq(extractDir)}' -Force`
+              ],
+              { windowsHide: true, timeout: 180000 },
+              (err) => (err ? reject(err) : resolve())
+            )
+          })
+          if (api.isCancelled()) {
+            cleanTemp()
+            return
+          }
+          const stack = [extractDir]
+          while (stack.length) {
+            const dir = stack.pop()!
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const p = path.join(dir, entry.name)
+              if (entry.isDirectory()) stack.push(p)
+              else if (entry.name === 'ffmpeg.exe' || entry.name === 'ffprobe.exe') {
+                fs.copyFileSync(p, path.join(downloadedBinDir, entry.name))
+              }
+            }
+          }
+          cleanTemp()
+        }
+
+        clearBinCache()
+        const st = binsStatus()
+        if (!st.ffmpeg || !st.ytdlp) throw new Error('Tải binaries chưa hoàn tất — kiểm tra mạng rồi thử lại')
+        api.update({ progress: 100, detail: 'Hoàn tất' })
+      } catch (err) {
+        if (api.isCancelled()) {
+          cleanTemp()
+          return // bị huỷ giữa chừng (abort/…): thoát êm, không báo lỗi
+        }
+        throw err
+      }
     }
   })
 }

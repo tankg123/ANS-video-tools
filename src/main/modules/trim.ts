@@ -1,6 +1,7 @@
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
 import type { TrimStartPayload } from '@shared/modules/trim'
+import { encoderQualityArgs } from '../util'
 
 /**
  * Module Cắt ngắn Video (spec 4.6):
@@ -15,7 +16,10 @@ export default function register(ctx: ModuleContext): void {
     const dur = end - start
     if (!(dur > 0)) throw new Error('Điểm kết thúc phải lớn hơn điểm bắt đầu')
 
-    const output = ctx.deriveOutput(p.input, '_cut', p.outputDir)
+    // precise re-encode h264+aac → luôn xuất .mp4 (giữ đuôi gốc .webm/.mpg sẽ fail write header)
+    const output = p.precise
+      ? ctx.deriveOutput(p.input, '_cut', p.outputDir, '.mp4')
+      : ctx.deriveOutput(p.input, '_cut', p.outputDir)
     let args: string[]
     if (p.precise) {
       const enc = await ctx.pickEncoder('h264')
@@ -24,7 +28,7 @@ export default function register(ctx: ModuleContext): void {
         '-i', p.input,
         '-t', dur.toFixed(3),
         '-c:v', enc,
-        ...(enc === 'libx264' ? ['-preset', 'veryfast', '-crf', '18'] : ['-cq', '19']),
+        ...encoderQualityArgs(enc),
         '-c:a', 'aac',
         '-b:a', '192k',
         output

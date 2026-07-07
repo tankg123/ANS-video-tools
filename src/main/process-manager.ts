@@ -12,6 +12,8 @@ export interface SpawnOptions {
   cwd?: string
   /** gọi cho từng dòng stdout/stderr */
   onLine?: (line: string, stream: 'out' | 'err') => void
+  /** nhãn phân loại process (vd 'download') để KILL ALL có thể chừa ra; mặc định 'misc' */
+  tag?: string
 }
 
 function execFileP(cmd: string, args: string[]): Promise<string> {
@@ -29,7 +31,8 @@ function execFileP(cmd: string, args: string[]): Promise<string> {
  * - kill cả process tree (taskkill /T /F)
  */
 export class ProcessManager {
-  private pids = new Set<number>()
+  /** pid → tag ('download', 'ffmpeg', 'live', 'misc'...) */
+  private pids = new Map<number, string>()
 
   spawnManaged(bin: string, args: string[], opts: SpawnOptions = {}): { child: ChildProcess } {
     const child = spawn(bin, args, {
@@ -43,7 +46,7 @@ export class ProcessManager {
       } catch {
         /* process có thể đã thoát ngay */
       }
-      this.pids.add(child.pid)
+      this.pids.set(child.pid, opts.tag ?? 'misc')
       this.persistPids()
     }
     if (opts.onLine) {
@@ -85,11 +88,18 @@ export class ProcessManager {
     }
   }
 
-  /** KILL ALL: diệt mọi PID đang track. Trả về số process đã kill. */
-  killAllTracked(): number {
-    const pids = [...this.pids]
-    for (const pid of pids) this.killTree(pid)
-    return pids.length
+  /**
+   * KILL ALL: diệt mọi PID đang track, trừ các tag trong excludeTags
+   * (vd Set(['download']) — không đụng tác vụ tải video). Trả về số process đã kill.
+   */
+  killAllTracked(excludeTags?: Set<string>): number {
+    let killed = 0
+    for (const [pid, tag] of [...this.pids]) {
+      if (excludeTags?.has(tag)) continue
+      this.killTree(pid)
+      killed++
+    }
+    return killed
   }
 
   trackedCount(): number {
@@ -123,7 +133,8 @@ export class ProcessManager {
 
   private persistPids(): void {
     try {
-      fs.writeFileSync(PID_FILE, JSON.stringify([...this.pids]), 'utf8')
+      // vẫn ghi mảng số [pid,...] như cũ — orphanCleanup không đổi định dạng
+      fs.writeFileSync(PID_FILE, JSON.stringify([...this.pids.keys()]), 'utf8')
     } catch {
       /* ignore */
     }

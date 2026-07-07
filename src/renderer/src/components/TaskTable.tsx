@@ -40,7 +40,16 @@ const Row = memo(function Row({ id, onLog }: { id: string; onLog: (id: string) =
         <StatusChip status={task.status} />
       </td>
       <td style={{ width: 190 }}>
-        <ProgressBar value={task.status === 'completed' ? 100 : task.progress} />
+        {/* killed/error mà progress indeterminate (-1) → 0, tránh animation chạy mãi */}
+        <ProgressBar
+          value={
+            task.status === 'completed'
+              ? 100
+              : (task.status === 'killed' || task.status === 'error') && task.progress < 0
+                ? 0
+                : task.progress
+          }
+        />
       </td>
       <td className="mono text-dim" style={{ fontSize: 11.5 }}>
         {[task.speed, task.eta && `ETA ${task.eta}`, task.detail].filter(Boolean).join(' · ') || '—'}

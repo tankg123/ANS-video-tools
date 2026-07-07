@@ -1,4 +1,5 @@
 import { ReactNode, useEffect } from 'react'
+import { useT } from '../i18n'
 
 export function Modal({
   title,
@@ -13,6 +14,7 @@ export function Modal({
   actions?: ReactNode
   wide?: boolean
 }): React.JSX.Element {
+  const t = useT()
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
@@ -26,7 +28,7 @@ export function Modal({
       <div className={`modal${wide ? ' wide' : ''}`}>
         <div className="modal-title">
           {title}
-          <button className="x" onClick={onClose} title="Đóng">
+          <button className="x" onClick={onClose} title={t('Đóng', 'Close')}>
             ✕
           </button>
         </div>

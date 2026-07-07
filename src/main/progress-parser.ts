@@ -38,8 +38,9 @@ export interface YtdlpProgress {
 }
 
 // "[download]  42.5% of ~ 120.5MiB at 2.5MiB/s ETA 00:35"
+// Lưu ý: nhóm size phải greedy (\S+) — nếu lazy sẽ cắt size và làm speed/ETA không match
 const DL_RE =
-  /^\[download\]\s+([\d.]+)%(?:\s+of\s+~?\s*([\d.]+\s*\S+?))?(?:\s+at\s+(\S+))?(?:\s+ETA\s+(\S+))?/
+  /^\[download\]\s+([\d.]+)%(?:\s+of\s+~?\s*([\d.]+\s*\S+))?(?:\s+at\s+(\S+))?(?:\s+ETA\s+(\S+))?/
 const DEST_RE = /^\[download\]\s+Destination:\s+(.+)$/
 const MERGE_RE = /^\[Merger\]\s+Merging formats into\s+"(.+)"/
 const ALREADY_RE = /has already been downloaded/

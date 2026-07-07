@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { encoderQualityArgs, MP4_SAFE_AUDIO } from '../util'
 import type { ModuleContext } from '../module-context'
 import type {
   GreenScreenParams,
@@ -11,7 +12,7 @@ import type {
 /**
  * Module Chèn Phông Xanh (spec 4.7):
  * - filter_complex: scale overlay → chromakey → overlay lên nền
- * - Luôn re-encode (chromakey không thể -c copy), audio copy từ nền
+ * - Luôn re-encode (chromakey không thể -c copy), audio copy từ nền nếu hợp .mp4, ngược lại AAC
  * - Preview 1 frame chạy đồng bộ ngoài queue (spawnManaged + timeout 20s)
  */
 
@@ -78,6 +79,9 @@ export default function register(ctx: ModuleContext): void {
     const filter = buildFilter(p, bgInfo.video.width, ovIsImage)
     const enc = await ctx.pickEncoder('h264')
     const output = ctx.deriveOutput(p.background, '_greenscreen', p.outputDir, '.mp4')
+    // Audio nền: copy chỉ khi codec hợp lệ với .mp4, ngược lại re-encode AAC
+    const audioCopyOk =
+      !bgInfo.audio || MP4_SAFE_AUDIO.has((bgInfo.audio.codec || '').toLowerCase())
     const args = [
       '-i', p.background,
       ...(ovIsImage ? ['-loop', '1'] : []),
@@ -85,9 +89,9 @@ export default function register(ctx: ModuleContext): void {
       '-filter_complex', filter,
       '-map', '[outv]',
       '-map', '0:a?',
-      '-c:a', 'copy',
+      ...(audioCopyOk ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-b:a', '192k']),
       '-c:v', enc,
-      ...(enc === 'libx264' ? ['-preset', 'veryfast', '-crf', '18'] : ['-cq', '19']),
+      ...encoderQualityArgs(enc),
       ...(ovIsImage ? ['-shortest'] : []),
       output
     ]

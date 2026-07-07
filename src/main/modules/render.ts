@@ -11,12 +11,20 @@ import type {
  * Module Render H264/H265 (spec 4.3):
  * - Render hàng loạt: mỗi file 1 task ffmpeg trong TaskQueue (pool 'ffmpeg')
  * - Encoder tự dò qua ctx.pickEncoder (NVENC → QSV → AMF → libx264/libx265)
- * - NVENC: decode CUDA (-hwaccel cuda -hwaccel_output_format cuda) + scale_cuda (spec 5.1)
+ * - NVENC: decode CUDA + scale_cuda (spec 5.1) — CHỈ khi codec nguồn có NVDEC và pixFmt 8-bit,
+ *   ngược lại decode phần mềm để không fail (NVDEC không hỗ trợ / h264_nvenc không encode 10-bit)
  * - Probe trước để lấy durationSec → TaskTable hiện % + speed (spec 5.3)
  */
 
 const SW_PRESETS = new Set(['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'])
 const NV_PRESETS = new Set(['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'])
+
+/** Codec nguồn mà NVDEC decode được trên GPU (cuda-path) */
+const NVDEC_CODECS = new Set(['h264', 'hevc', 'vp9', 'av1', 'mpeg2video', 'vc1'])
+
+/** pixFmt 8-bit 4:2:0 (yuv420p/nv12...) — loại 10/12-bit và 4:2:2/4:4:4 */
+const is8Bit420 = (pixFmt: string): boolean =>
+  pixFmt !== '' && !['10le', '12le', '422', '444'].some((s) => pixFmt.includes(s))
 
 /** Audio codec copy được vào container MP4 mà không lỗi mux */
 const MP4_AUDIO_OK = new Set(['aac', 'mp3', 'ac3', 'eac3', 'alac', 'mp2'])
@@ -48,21 +56,29 @@ export default function register(ctx: ModuleContext): void {
     const skipped: string[] = []
 
     for (const input of inputs) {
-      // Probe trước để lấy durationSec (tính %) + audio codec (quyết định copy hay AAC)
+      // Probe trước: durationSec (tính %), audio codec (copy hay AAC), video codec + pixFmt (gate cuda-path)
       let durationSec = 0
       let srcAudio = ''
+      let srcVideo = ''
+      let srcPixFmt = ''
       try {
         const info = await ctx.probe(input)
         durationSec = info.durationSec
         srcAudio = info.audio?.codec?.toLowerCase() ?? ''
+        srcVideo = info.video?.codec?.toLowerCase() ?? ''
+        srcPixFmt = info.video?.pixFmt?.toLowerCase() ?? ''
       } catch {
         skipped.push(input)
         continue
       }
 
+      // Cuda-path chỉ khi NVDEC decode được codec nguồn VÀ nguồn 8-bit 4:2:0
+      // (10-bit/4:2:2/codec lạ → decode phần mềm thay vì fail)
+      const useCuda = isNvenc && NVDEC_CODECS.has(srcVideo) && is8Bit420(srcPixFmt)
+
       const args: string[] = []
       // NVENC: decode trên GPU (spec 5.1)
-      if (isNvenc) args.push('-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda')
+      if (useCuda) args.push('-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda')
       args.push('-i', input)
       // Chỉ map video đầu + audio đầu (bỏ subtitle/attachment gây lỗi mux MP4)
       args.push('-map', '0:v:0', '-map', '0:a:0?')
@@ -70,8 +86,11 @@ export default function register(ctx: ModuleContext): void {
       if (o.fps !== 'keep') args.push('-r', String(o.fps))
       if (o.resolution !== 'keep') {
         const h = Number(o.resolution)
-        args.push('-vf', isNvenc ? `scale_cuda=-2:${h}` : `scale=-2:${h}`)
+        args.push('-vf', useCuda ? `scale_cuda=-2:${h}` : `scale=-2:${h}`)
       }
+      // Decode phần mềm: chuẩn hoá 8-bit cho encoder hw hoặc đích h264 (h264_nvenc/libx264 không encode 10-bit);
+      // libx265 giữ nguyên pixFmt nguồn (encode được 10-bit)
+      if (!useCuda && (!isSw || codec === 'h264')) args.push('-pix_fmt', 'yuv420p')
 
       args.push('-c:v', enc)
 

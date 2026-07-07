@@ -45,6 +45,8 @@ export default function register(ctx: ModuleContext): void {
         '-b:v', bitrate,
         '-maxrate', bitrate,
         '-bufsize', bufsize,
+        // Ép 8-bit 4:2:0 — nguồn 10-bit/4:2:2 sẽ fail trên NVENC hoặc ra High10 bị RTMP từ chối
+        '-pix_fmt', 'yuv420p',
         '-g', '60',
         '-c:a', 'aac',
         '-b:a', '128k',

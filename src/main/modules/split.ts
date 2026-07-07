@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
 import type { SplitStartPayload, SplitStartResult } from '@shared/modules/split'
+import { encoderQualityArgs } from '../util'
 
 /**
  * Module Cắt chia nhỏ Video (spec 4.5):
@@ -10,19 +11,26 @@ import type { SplitStartPayload, SplitStartResult } from '@shared/modules/split'
  * - Chia theo thời lượng mỗi phần hoặc theo số phần (probe duration → segment_time)
  */
 
+/** Escape '%' → '%%' cho template segment của ffmpeg ('%' literal trong tên/thư mục phá %03d). */
+function ffEscapePercent(s: string): string {
+  return s.replace(/%/g, '%%')
+}
+
 /** Sinh pattern output <dir>/<name>_part_%03d<ext>, tự tránh ghi đè phần cũ. */
-function derivePattern(input: string, outDir?: string): { pattern: string; firstPart: string } {
+function derivePattern(input: string, outDir?: string, forceExt?: string): { pattern: string; firstPart: string } {
   const dir = outDir && outDir.trim() ? outDir : path.dirname(input)
   const base = path.basename(input, path.extname(input))
-  const ext = path.extname(input) || '.mp4'
+  const ext = forceExt ?? (path.extname(input) || '.mp4')
   let tag = '_part_'
   let i = 1
+  // check ghi đè bằng tên literal (1 dấu '%') — ffmpeg ghi '%%' ra file thành '%'
   while (fs.existsSync(path.join(dir, `${base}${tag}000${ext}`))) {
     tag = `_part (${i})_`
     i++
   }
   return {
-    pattern: path.join(dir, `${base}${tag}%03d${ext}`),
+    // escape mọi phần literal của pattern, chỉ giữ %03d làm placeholder
+    pattern: path.join(ffEscapePercent(dir), `${ffEscapePercent(base + tag)}%03d${ffEscapePercent(ext)}`),
     firstPart: path.join(dir, `${base}${tag}000${ext}`)
   }
 }
@@ -68,14 +76,15 @@ export default function register(ctx: ModuleContext): void {
           }
         }
 
-        const { pattern, firstPart } = derivePattern(input, p.outputDir)
+        // precise re-encode h264+aac → segment luôn xuất .mp4; copy mode giữ đuôi gốc
+        const { pattern, firstPart } = derivePattern(input, p.outputDir, p.precise ? '.mp4' : undefined)
 
         let args: string[]
         if (p.precise) {
           args = [
             '-i', input,
             '-c:v', enc,
-            ...(enc === 'libx264' ? ['-preset', 'veryfast', '-crf', '18'] : ['-cq', '19']),
+            ...encoderQualityArgs(enc),
             '-c:a', 'aac',
             '-b:a', '192k',
             // ép keyframe đúng mốc chia để mỗi phần bắt đầu chính xác

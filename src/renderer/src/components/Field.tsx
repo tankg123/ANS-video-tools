@@ -1,4 +1,4 @@
-import { ReactNode } from 'react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
 import { pickFolder } from '../api'
 import { useT } from '../i18n'
 
@@ -58,21 +58,52 @@ export function NumInput({
   step?: number
   disabled?: boolean
 }): React.JSX.Element {
+  // Giữ text thô khi đang gõ để không clamp từng phím (vd min=200 sẽ gõ được "2", "20"...)
+  const [text, setText] = useState(Number.isFinite(value) ? String(value) : '')
+  const focused = useRef(false)
+
+  // Đồng bộ lại khi value đổi từ ngoài (không đè khi đang gõ)
+  useEffect(() => {
+    if (!focused.current) setText(Number.isFinite(value) ? String(value) : '')
+  }, [value])
+
+  // Clamp + báo giá trị cuối cùng khi blur/Enter
+  const commit = (): void => {
+    let v = parseFloat(text)
+    if (Number.isNaN(v)) v = min ?? 0
+    if (min !== undefined) v = Math.max(min, v)
+    if (max !== undefined) v = Math.min(max, v)
+    setText(String(v))
+    onChange(v)
+  }
+
   return (
     <input
       type="number"
       className="input"
-      value={Number.isFinite(value) ? value : ''}
+      value={text}
       min={min}
       max={max}
       step={step}
       disabled={disabled}
+      onFocus={() => {
+        focused.current = true
+      }}
       onChange={(e) => {
-        let v = parseFloat(e.target.value)
-        if (Number.isNaN(v)) v = min ?? 0
-        if (min !== undefined) v = Math.max(min, v)
-        if (max !== undefined) v = Math.min(max, v)
-        onChange(v)
+        const raw = e.target.value
+        setText(raw)
+        // Đang gõ mà đã hợp lệ trong range → báo luôn cho mượt
+        const v = parseFloat(raw)
+        if (!Number.isNaN(v) && (min === undefined || v >= min) && (max === undefined || v <= max)) {
+          onChange(v)
+        }
+      }}
+      onBlur={() => {
+        focused.current = false
+        commit()
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit()
       }}
     />
   )

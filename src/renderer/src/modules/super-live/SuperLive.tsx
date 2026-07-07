@@ -293,7 +293,12 @@ function StreamRow({
         )}
       </td>
       <td>
-        <Elapsed startedAt={task?.startedAt} finishedAt={task?.finishedAt} />
+        {/* Đang chờ đến giờ hẹn → chưa phát, không chạy đồng hồ */}
+        {waiting ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <Elapsed startedAt={task?.startedAt} finishedAt={task?.finishedAt} />
+        )}
       </td>
       <td>
         <div className="row" style={{ justifyContent: 'flex-end' }}>

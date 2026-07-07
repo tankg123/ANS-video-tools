@@ -24,11 +24,12 @@ export function runProcessTask(
   api: TaskApi,
   bin: string,
   args: string[],
-  opts: { cwd?: string; onLine: (line: string) => void }
+  opts: { cwd?: string; tag?: string; onLine: (line: string) => void }
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const { child } = pm.spawnManaged(bin, args, {
       cwd: opts.cwd,
+      tag: opts.tag,
       onLine: (line) => opts.onLine(line)
     })
     api.update({ pid: child.pid })
@@ -60,6 +61,7 @@ export function enqueueFfmpeg(o: FfmpegTaskOptions): string {
       try {
         const code = await runProcessTask(api, bin, fullArgs, {
           cwd: o.cwd,
+          tag: o.pool ?? 'ffmpeg',
           onLine: (line) => {
             log.write(line)
             if (line.trim()) lastLine = line.trim()
@@ -120,6 +122,7 @@ export function enqueueYtdlp(o: YtdlpTaskOptions): string {
       try {
         const code = await runProcessTask(api, bin, fullArgs, {
           cwd: o.cwd,
+          tag: 'download',
           onLine: (line) => {
             log.write(line)
             if (line.trim()) lastLine = line.trim()
@@ -150,10 +153,10 @@ export function enqueueYtdlp(o: YtdlpTaskOptions): string {
   })
 }
 
-/** Nút đỏ KILL ALL FFMPEG (spec mục 2). */
+/** Nút đỏ KILL ALL FFMPEG (spec mục 2) — KHÔNG đụng pool/process tải video ('download'). */
 export async function killAllFfmpeg(): Promise<{ cancelledTasks: number; killedProcesses: number }> {
   const cancelledTasks = queue.cancelPools(['ffmpeg', 'live', 'misc'])
-  const killedProcesses = pm.killAllTracked()
+  const killedProcesses = pm.killAllTracked(new Set(['download']))
   const orphans = await pm.orphanCleanup()
   return { cancelledTasks, killedProcesses: killedProcesses + orphans }
 }

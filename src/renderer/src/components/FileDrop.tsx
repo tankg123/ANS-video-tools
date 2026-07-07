@@ -35,7 +35,7 @@ export function FileDrop({
         const st = await statPath(p)
         if (st.isDirectory && allowFolder) {
           out.push(...(await scanDir(p)))
-        } else if (st.exists) {
+        } else if (st.exists && !st.isDirectory) {
           out.push(p)
         }
       }

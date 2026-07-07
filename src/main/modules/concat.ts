@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
+import { encoderQualityArgs } from '../util'
 import type {
   ConcatAnalyzePayload,
   ConcatAnalyzeResult,
@@ -142,7 +143,7 @@ export default function register(ctx: ModuleContext): void {
       '-map', '[vout]',
       '-map', '[aout]',
       '-c:v', enc,
-      ...(enc === 'libx264' ? ['-preset', 'veryfast', '-crf', '18'] : ['-cq', '19']),
+      ...encoderQualityArgs(enc, 18),
       '-c:a', 'aac',
       '-b:a', '192k',
       output
