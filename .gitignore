@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+release/
+.smoke/
+logs/
+bin/*.exe
+bin/*.zip
+*.log
+.DS_Store

@@ -1,0 +1,19 @@
+{
+  "name": "video-toolkit-aio-pro",
+  "productName": "Video Toolkit AIO Pro",
+  "version": "1.0.0",
+  "description": "Desktop app xử lý video đa năng (All-In-One) — FFmpeg + yt-dlp",
+  "main": "./out/main/index.js",
+  "author": "ANS Studio",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "start": "electron-vite preview",
+    "smoke": "electron-vite build && cross-env VT_SMOKE=1 electron .",
+    "fetch-bins": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-binaries.ps1",
+    "dist": "electron-vite build && electron-builder --win"
+  }
+}
