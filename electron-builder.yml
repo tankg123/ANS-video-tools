@@ -1,0 +1,19 @@
+appId: com.ansstudio.videotoolkit
+productName: Video Toolkit AIO Pro
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: bin
+    to: bin
+    filter: ['**/*.exe']
+asar: true
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: Video Toolkit AIO Pro
