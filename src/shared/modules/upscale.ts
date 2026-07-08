@@ -21,6 +21,12 @@ export interface UpscaleStartPayload {
   codec: 'h264' | 'hevc'
   /** thư mục xuất; rỗng = cùng thư mục file gốc */
   outputDir?: string
+  /** khung hình trung gian (AI): 'jpg' nhanh + nhẹ đĩa ~6 lần (mặc định), 'png' lossless */
+  frameFormat?: 'jpg' | 'png'
+  /** tile size GPU (AI): 0 = tự động; 512 nhanh hơn nếu VRAM ≥ 8GB, 256 cho VRAM thấp */
+  tileSize?: 0 | 256 | 512
+  /** giới hạn FPS đầu ra: 0 = giữ nguyên; 30/24 giảm số khung phải xử lý (60→30 ≈ nhanh 2×) */
+  fpsLimit?: 0 | 24 | 30
 }
 
 export interface UpscaleStartResult {

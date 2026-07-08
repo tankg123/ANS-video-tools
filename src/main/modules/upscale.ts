@@ -13,13 +13,23 @@ import type { ModuleContext } from '../module-context'
 import { parseFfmpegLine } from '../progress-parser'
 import { encoderQualityArgs, MP4_SAFE_AUDIO } from '../util'
 
-/** Đếm file .png trong thư mục (thư mục chưa tồn tại / lỗi đọc → 0) */
-function countPng(dir: string): number {
+/** Đếm file khung hình theo đuôi trong thư mục (thư mục chưa tồn tại / lỗi đọc → 0) */
+function countFrames(dir: string, ext: string): number {
+  const suffix = '.' + ext
   try {
-    return fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.png')).length
+    return fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith(suffix)).length
   } catch {
     return 0
   }
+}
+
+/**
+ * Luồng nạp/lưu ảnh cho realesrgan-ncnn-vulkan (-j load:proc:save, mặc định của tool
+ * là 1:2:2): tăng theo số nhân CPU để GPU không phải chờ decode/encode ảnh — trên máy
+ * nhiều nhân đây là nút thắt lớn thứ hai sau chính GPU.
+ */
+function ioThreads(): number {
+  return Math.min(8, Math.max(2, Math.floor(os.cpus().length / 4)))
 }
 
 type UpscaleKv = ReturnType<ModuleContext['kv']>
@@ -73,10 +83,12 @@ function killStaleRealesrganPids(kv: UpscaleKv, pm: ModuleContext['pm']): void {
  * Module Nâng cấp 4K (Upscale):
  * - Engine 'fast': 1 lệnh FFmpeg — Lanczos + CAS sharpening (nhanh, chất lượng khá).
  *   Cú pháp filter 'scale=...:flags=lanczos,cas=0.45' đã xác minh với bin/ffmpeg.exe.
- * - Engine 'realesrgan': pipeline 3 giai đoạn trong MỘT task (rã khung PNG → AI upscale
+ * - Engine 'realesrgan': pipeline 3 giai đoạn trong MỘT task (rã khung hình → AI upscale
  *   từng khung bằng realesrgan-ncnn-vulkan → nén lại + ghép audio gốc).
- *   LƯU Ý dung lượng đĩa: PNG ~2-8MB/khung (khung đã upscale còn lớn hơn) — video dài
- *   có thể chiếm hàng chục đến hàng trăm GB trong thư mục tạm .vt-tmp (dọn ở finally).
+ *   Tối ưu tốc độ: khung trung gian JPG q=2 mặc định (nhẹ đĩa ~6 lần so với PNG),
+ *   -j nhiều luồng nạp/lưu ảnh, tuỳ chọn tile size theo VRAM, tuỳ chọn giảm FPS.
+ *   LƯU Ý dung lượng đĩa tạm: JPG ~1-2MB/khung, PNG ~2-8MB/khung (khung đã upscale còn
+ *   lớn hơn) — video dài có thể chiếm hàng chục GB trong .vt-tmp (dọn ở finally).
  */
 export default function register(ctx: ModuleContext): void {
   const kv = ctx.kv('upscale')
@@ -151,6 +163,9 @@ export default function register(ctx: ModuleContext): void {
 
         const fps = info.video.fps || 30
         const dur = info.durationSec
+        // Giảm FPS đầu ra (tuỳ chọn) — chỉ khi thấp hơn FPS nguồn; 60→30 nghĩa là
+        // AI chỉ phải xử lý một nửa số khung hình
+        const fpsLimit = p.fpsLimit && p.fpsLimit > 0 && p.fpsLimit < fps ? p.fpsLimit : 0
         // Cạnh NGẮN đạt target — chọn hướng NGAY TRONG filter theo khung ĐÃ giải mã
         // (iw/ih): ffmpeg tự xoay khung theo rotation metadata TRƯỚC -vf, nên không được
         // chọn hướng từ width/height của probe (video điện thoại quay dọc lưu
@@ -171,7 +186,7 @@ export default function register(ctx: ModuleContext): void {
               args: [
                 '-i', input,
                 '-map', '0:v:0', '-map', '0:a:0?',
-                '-vf', `${scaleExpr}:flags=lanczos,cas=0.45`,
+                '-vf', `${fpsLimit ? `fps=${fpsLimit},` : ''}${scaleExpr}:flags=lanczos,cas=0.45`,
                 '-c:v', enc, ...quality,
                 '-pix_fmt', 'yuv420p',
                 ...hevcTag,
@@ -191,6 +206,9 @@ export default function register(ctx: ModuleContext): void {
         if (!engine) throw new Error('Chưa cài engine AI — bấm "Tải engine AI" trong module')
         const { exe, modelsDir } = engine
         const model = p.model
+        // JPG q=2 gần như không phân biệt được bằng mắt so với PNG nhưng nhẹ đĩa ~6 lần
+        // → cả 3 giai đoạn đều nhanh hơn rõ (đọc/ghi ít hơn); 'png' cho ai cần lossless.
+        const frameExt = p.frameFormat === 'png' ? 'png' : 'jpg'
         // Scale factor: animevideov3 hỗ trợ x2/x3/x4 → chọn vừa đủ đạt target;
         // x4plus / x4plus-anime chỉ có x4 (giai đoạn C sẽ hạ về đúng target nếu dư)
         const s =
@@ -203,7 +221,7 @@ export default function register(ctx: ModuleContext): void {
             type: 'upscale',
             pool: 'ffmpeg',
             title: `Upscale ${label} AI: ${path.basename(input)}`,
-            meta: { engine: 'realesrgan', model, mode: 're-encode', target: p.target },
+            meta: { engine: 'realesrgan', model, mode: 're-encode', target: p.target, frameFormat: frameExt, fpsLimit },
             run: async (api) => {
               const ffmpegBin = ctx.resolveBin('ffmpeg')
               if (!ffmpegBin) {
@@ -262,8 +280,14 @@ export default function register(ctx: ModuleContext): void {
                 })
 
               try {
-                // ----- Giai đoạn A (0→15%): rã khung hình thành PNG -----
-                const aArgs = ['-hide_banner', '-nostdin', '-y', '-i', input, path.join(inDir, '%08d.png')]
+                // ----- Giai đoạn A (0→15%): rã khung hình (JPG q=2 mặc định / PNG) -----
+                const aArgs = [
+                  '-hide_banner', '-nostdin', '-y',
+                  '-i', input,
+                  ...(fpsLimit ? ['-vf', `fps=${fpsLimit}`] : []),
+                  ...(frameExt === 'jpg' ? ['-qscale:v', '2'] : []),
+                  path.join(inDir, `%08d.${frameExt}`)
+                ]
                 log.write(`CMD: ffmpeg ${aArgs.join(' ')}`)
                 api.update({ detail: 'Rã khung hình...' })
                 await runStage('Rã khung hình', ffmpegBin, aArgs, (line) => {
@@ -278,17 +302,26 @@ export default function register(ctx: ModuleContext): void {
                 })
                 if (api.isCancelled()) return
 
-                const totalFrames = countPng(inDir)
+                const totalFrames = countFrames(inDir, frameExt)
                 if (!totalFrames) throw new Error('Không rã được khung hình nào từ video')
 
                 // ----- Giai đoạn B (15→85%): AI upscale từng khung -----
-                const bArgs = ['-i', inDir, '-o', framesDir, '-n', model, '-s', String(s), '-f', 'png', '-m', modelsDir]
+                // -j load:proc:save — nhiều luồng nạp/lưu để GPU không chờ I/O ảnh
+                const io = ioThreads()
+                const bArgs = [
+                  '-i', inDir, '-o', framesDir,
+                  '-n', model, '-s', String(s),
+                  '-f', frameExt,
+                  '-m', modelsDir,
+                  '-j', `${io}:2:${io}`,
+                  ...(p.tileSize ? ['-t', String(p.tileSize)] : [])
+                ]
                 log.write(`CMD: ${path.basename(exe)} ${bArgs.join(' ')}`)
                 api.update({ progress: 15, detail: `AI upscale 0/${totalFrames} khung` })
                 let lastDone = 0
                 let lastAt = Date.now()
                 const timer = setInterval(() => {
-                  const done = countPng(framesDir)
+                  const done = countFrames(framesDir, frameExt)
                   const now = Date.now()
                   const rate = (done - lastDone) / Math.max(0.25, (now - lastAt) / 1000)
                   lastDone = done
@@ -306,21 +339,21 @@ export default function register(ctx: ModuleContext): void {
                   clearInterval(timer)
                 }
                 if (api.isCancelled()) return
-                if (!countPng(framesDir)) {
+                if (!countFrames(framesDir, frameExt)) {
                   throw new Error('Engine AI không tạo được khung hình nào — kiểm tra GPU/driver Vulkan (xem log)')
                 }
 
-                // ----- Giai đoạn C (85→100%): nén khung PNG + audio gốc thành MP4 -----
+                // ----- Giai đoạn C (85→100%): nén khung hình + audio gốc thành MP4 -----
                 // Framerate tái dựng CHÍNH XÁC = số khung / thời lượng: fps từ probe bị
                 // làm tròn 2 chữ số (23.98 thay vì 24000/1001) → video dài lệch A/V dồn
-                // dần; cách này cũng tự đúng với nguồn VFR. KHÔNG dùng '-shortest':
-                // audio ngắn hơn video sẽ cắt mất khung cuối (mp4 chấp nhận 2 luồng
-                // lệch độ dài — engine 'fast' cũng giữ nguyên đủ thời lượng).
-                const cFramerate = dur > 0 ? totalFrames / dur : fps
+                // dần; cách này cũng tự đúng với nguồn VFR và khi đã giảm FPS ở giai
+                // đoạn A. KHÔNG dùng '-shortest': audio ngắn hơn video sẽ cắt mất khung
+                // cuối (mp4 chấp nhận 2 luồng lệch độ dài — engine 'fast' cũng vậy).
+                const cFramerate = dur > 0 ? totalFrames / dur : (fpsLimit || fps)
                 const cArgs = [
                   '-hide_banner', '-nostdin', '-y',
                   '-framerate', String(cFramerate),
-                  '-i', path.join(framesDir, '%08d.png'),
+                  '-i', path.join(framesDir, `%08d.${frameExt}`),
                   '-i', input,
                   '-map', '0:v:0', '-map', '1:a:0?',
                   '-vf', `${scaleExpr}:flags=lanczos`,

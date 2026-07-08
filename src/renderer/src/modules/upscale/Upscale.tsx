@@ -124,6 +124,9 @@ export default function Upscale(): React.JSX.Element {
   const [model, setModel] = useState<UpscaleModel>('realesrgan-x4plus')
   const [target, setTarget] = useState<2160 | 1440>(2160)
   const [codec, setCodec] = useState<'h264' | 'hevc'>('hevc')
+  const [frameFormat, setFrameFormat] = useState<'jpg' | 'png'>('jpg')
+  const [tileSize, setTileSize] = useState<0 | 256 | 512>(0)
+  const [fpsLimit, setFpsLimit] = useState<0 | 24 | 30>(0)
   const [busy, setBusy] = useState(false)
 
   // engine AI vừa phát hiện đã cài → tự chọn AI (1 lần); chưa cài → ép về Nhanh
@@ -160,7 +163,10 @@ export default function Upscale(): React.JSX.Element {
         model,
         target,
         codec,
-        outputDir
+        outputDir,
+        frameFormat,
+        tileSize,
+        fpsLimit
       }
       const res = await invoke<UpscaleStartResult>('mod:upscale:start', payload)
       if (res.errors.length) {
@@ -181,13 +187,17 @@ export default function Upscale(): React.JSX.Element {
     }
   }
 
-  // Ước tính đĩa tạm cho chế độ AI: ≈ 10MB × số khung hình
-  const totalFrames = items.reduce(
-    (s, it) => s + (it.info ? it.info.durationSec * (it.info.video?.fps || 30) : 0),
-    0
-  )
+  // Ước tính đĩa tạm cho chế độ AI: JPG ≈ 1.5MB/khung, PNG ≈ 10MB/khung (gồm cả khung
+  // đã upscale); số khung tính theo FPS hiệu dụng nếu có giới hạn FPS
+  const totalFrames = items.reduce((s, it) => {
+    if (!it.info) return s
+    const srcFps = it.info.video?.fps || 30
+    const effFps = fpsLimit && fpsLimit < srcFps ? fpsLimit : srcFps
+    return s + it.info.durationSec * effFps
+  }, 0)
   const totalSec = items.reduce((s, it) => s + (it.info?.durationSec ?? 0), 0)
-  const estTempBytes = totalFrames * 10 * 1024 * 1024
+  const perFrameMB = frameFormat === 'png' ? 10 : 1.5
+  const estTempBytes = totalFrames * perFrameMB * 1024 * 1024
 
   const engineHint = statusChecked
     ? t('chưa cài engine — tải ở thẻ Engine AI phía trên', 'engine not installed — download it in the AI Engine card above')
@@ -405,12 +415,62 @@ export default function Upscale(): React.JSX.Element {
           </Field>
         </div>
 
+        <div className="grid-3 mt">
+          <Field
+            label={t('FPS đầu ra', 'Output FPS')}
+            hint={t('Giảm FPS = ít khung phải xử lý (60→30 ≈ nhanh 2× ở chế độ AI)', 'Lower FPS = fewer frames to process (60→30 ≈ 2× faster in AI mode)')}
+          >
+            <Select<0 | 24 | 30>
+              value={fpsLimit}
+              onChange={setFpsLimit}
+              options={[
+                { value: 0, label: t('Giữ nguyên', 'Keep original') },
+                { value: 30, label: t('Tối đa 30 fps', 'Cap at 30 fps') },
+                { value: 24, label: t('Tối đa 24 fps', 'Cap at 24 fps') }
+              ]}
+            />
+          </Field>
+
+          {engine === 'realesrgan' && (
+            <Field
+              label={t('Khung hình trung gian', 'Intermediate frames')}
+              hint={t('JPG q2: nhanh + nhẹ đĩa ~6 lần, khác biệt không nhìn thấy', 'JPG q2: faster + ~6× less disk, visually identical')}
+            >
+              <Select<'jpg' | 'png'>
+                value={frameFormat}
+                onChange={setFrameFormat}
+                options={[
+                  { value: 'jpg', label: t('JPG (nhanh — khuyên dùng)', 'JPG (fast — recommended)') },
+                  { value: 'png', label: t('PNG (lossless, chậm + tốn đĩa)', 'PNG (lossless, slow + heavy)') }
+                ]}
+              />
+            </Field>
+          )}
+
+          {engine === 'realesrgan' && (
+            <Field
+              label={t('Tile size GPU', 'GPU tile size')}
+              hint={t('512 nhanh hơn nếu VRAM ≥ 8GB; 256 nếu VRAM thấp/lỗi', '512 is faster with ≥ 8GB VRAM; 256 for low VRAM/errors')}
+            >
+              <Select<0 | 256 | 512>
+                value={tileSize}
+                onChange={setTileSize}
+                options={[
+                  { value: 0, label: t('Tự động', 'Auto') },
+                  { value: 512, label: '512 (VRAM ≥ 8GB)' },
+                  { value: 256, label: t('256 (VRAM thấp)', '256 (low VRAM)') }
+                ]}
+              />
+            </Field>
+          )}
+        </div>
+
         {engine === 'realesrgan' && (
           <div className="hint mt">
             💾{' '}
             {t(
-              'Cần đĩa trống tạm ≈ 10MB × số khung hình (video 1 phút 30fps ≈ 18GB).',
-              'Needs temporary disk space ≈ 10MB × frame count (1-minute 30fps video ≈ 18GB).'
+              `Cần đĩa trống tạm ≈ ${perFrameMB}MB × số khung hình.`,
+              `Needs temporary disk space ≈ ${perFrameMB}MB × frame count.`
             )}
             {totalFrames > 0 && (
               <>
@@ -420,6 +480,10 @@ export default function Upscale(): React.JSX.Element {
                   `For the ${items.length} selected file(s) (~${Math.round(totalFrames).toLocaleString()} frames) ≈ ${fmtBytes(estTempBytes)}.`
                 )}
               </>
+            )}{' '}
+            {t(
+              '⚡ Mẹo nhanh nhất: model "Video anime nhanh (animevideov3)" nhanh hơn x4plus nhiều lần (kể cả với video thực, độ nét vẫn rất tốt).',
+              '⚡ Fastest tip: the "Fast anime video (animevideov3)" model is several times faster than x4plus (works well on real footage too).'
             )}
           </div>
         )}
