@@ -1,6 +1,6 @@
 {
-  "name": "video-toolkit-aio-pro",
-  "productName": "Video Toolkit AIO Pro",
+  "name": "ans-video-tools",
+  "productName": "ANS Video Tools",
   "version": "1.0.0",
   "description": "Desktop app xử lý video đa năng (All-In-One) — FFmpeg + yt-dlp",
   "main": "./out/main/index.js",

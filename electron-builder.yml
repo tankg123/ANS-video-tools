@@ -1,5 +1,5 @@
-appId: com.ansstudio.videotoolkit
-productName: Video Toolkit AIO Pro
+appId: com.ansstudio.ansvideotools
+productName: ANS Video Tools
 directories:
   output: release
 files:
@@ -16,4 +16,4 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  shortcutName: Video Toolkit AIO Pro
+  shortcutName: ANS Video Tools

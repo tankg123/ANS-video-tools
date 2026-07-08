@@ -22,8 +22,8 @@ function createWindow(): void {
     minWidth: 1080,
     minHeight: 700,
     show: false,
-    backgroundColor: '#0d1220',
-    title: 'Video Toolkit AIO Pro',
+    backgroundColor: '#0a0e17',
+    title: 'ANS Video Tools',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,

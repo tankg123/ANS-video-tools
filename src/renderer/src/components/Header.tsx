@@ -36,9 +36,11 @@ export function Header(): React.JSX.Element {
 
   return (
     <header className="header">
-      <div className="logo">
-        <span className="mark">🎬</span>
-        Video Toolkit <span style={{ color: 'var(--accent-hover)' }}>AIO Pro</span>
+      <div className="brand">
+        <span className="brand-mark">🎬</span>
+        <span className="brand-name">
+          <b>ANS</b> Video Tools
+        </span>
       </div>
       <button className="btn btn-danger btn-sm" onClick={() => setConfirmOpen(true)}>
         ⛔ KILL ALL FFMPEG

@@ -19,7 +19,7 @@ export function StatusBar(): React.JSX.Element {
 
   return (
     <footer className="statusbar">
-      <span>© 2026 ANS Studio · Video Toolkit AIO Pro v{version}</span>
+      <span>© 2026 ANS Studio · ANS Video Tools v{version}</span>
       <a onClick={() => void openExternal('https://facebook.com')}>Facebook</a>
       <a onClick={() => void openExternal('https://youtube.com')}>YouTube</a>
       <span>☎ 0900 000 000</span>
