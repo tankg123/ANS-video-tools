@@ -99,6 +99,105 @@ async function downloadToFile(
   fs.renameSync(tmp, dest)
 }
 
+// ---------------- Real-ESRGAN (engine AI upscale) ----------------
+
+const REALESRGAN_ZIP_URL =
+  'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip'
+
+/** Tìm engine Real-ESRGAN: userData/bin/realesrgan → <bundled bin>/realesrgan. */
+export function resolveRealesrgan(): { exe: string; modelsDir: string } | null {
+  for (const dir of [path.join(downloadedBinDir, 'realesrgan'), path.join(bundledBinDir, 'realesrgan')]) {
+    const exe = path.join(dir, 'realesrgan-ncnn-vulkan.exe')
+    if (fs.existsSync(exe)) {
+      const models = path.join(dir, 'models')
+      return { exe, modelsDir: fs.existsSync(models) ? models : dir }
+    }
+  }
+  return null
+}
+
+/**
+ * Tải engine Real-ESRGAN (~140MB, kèm models) về userData/bin/realesrgan.
+ * Chỉ chạy khi user chủ động bấm nút trong module Nâng cấp 4K. Trả về task id.
+ * Nếu đã có task tải đang chờ/chạy thì trả về id của task đó (không enqueue trùng).
+ */
+export function enqueueFetchRealesrgan(): string {
+  // Guard chống enqueue trùng: pool 'misc' cho phép 2 task song song — 2 lần bấm nút
+  // sẽ tạo 2 download cùng ghi 1 file zip → hỏng archive / rename EPERM.
+  const existing = queue
+    .list()
+    .find(
+      (t) => t.type === 'fetch-upscale-engine' && (t.status === 'queued' || t.status === 'running')
+    )
+  if (existing) return existing.id
+  return queue.add({
+    type: 'fetch-upscale-engine',
+    title: 'Tải engine AI Real-ESRGAN',
+    pool: 'misc',
+    run: async (api) => {
+      const ac = new AbortController()
+      api.setCancelHook(() => ac.abort())
+      // Tên zip duy nhất theo task — kể cả khi 2 task cùng chạy (race hiếm) cũng không
+      // bao giờ ghi đè .part của nhau
+      const zipPath = path.join(os.tmpdir(), `vt-realesrgan-${api.id}.zip`)
+      const destDir = path.join(downloadedBinDir, 'realesrgan')
+      const cleanZip = (): void => {
+        try {
+          fs.rmSync(zipPath, { force: true })
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        if (resolveRealesrgan()) {
+          api.update({ progress: 100, detail: 'Engine đã có sẵn' })
+          return
+        }
+        await downloadToFile(
+          REALESRGAN_ZIP_URL,
+          zipPath,
+          (pct, note) => api.update({ progress: pct * 0.9, detail: `realesrgan.zip ${note}` }),
+          ac.signal
+        )
+        if (api.isCancelled()) {
+          cleanZip()
+          return
+        }
+        api.update({ progress: 92, detail: 'Đang giải nén...' })
+        fs.mkdirSync(destDir, { recursive: true })
+        const psq = (p: string): string => p.replace(/'/g, "''")
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            'powershell',
+            [
+              '-NoProfile',
+              '-Command',
+              `Expand-Archive -LiteralPath '${psq(zipPath)}' -DestinationPath '${psq(destDir)}' -Force`
+            ],
+            { windowsHide: true, timeout: 180000 },
+            (err) => (err ? reject(err) : resolve())
+          )
+        })
+        cleanZip()
+        if (api.isCancelled()) {
+          try {
+            fs.rmSync(destDir, { recursive: true, force: true })
+          } catch {
+            /* ignore */
+          }
+          return
+        }
+        if (!resolveRealesrgan()) throw new Error('Giải nén xong nhưng không tìm thấy realesrgan-ncnn-vulkan.exe')
+        api.update({ progress: 100, detail: 'Hoàn tất' })
+      } catch (err) {
+        cleanZip()
+        if (api.isCancelled()) return
+        throw err
+      }
+    }
+  })
+}
+
 /**
  * Tải ffmpeg/ffprobe/yt-dlp về userData/bin (dùng khi máy user chưa có).
  * Trả về task id để UI theo dõi tiến trình.

@@ -2,6 +2,7 @@ import type { ModuleContext } from '../module-context'
 import registerSuperLive from './super-live'
 import registerBasicLive from './basic-live'
 import registerRender from './render'
+import registerUpscale from './upscale'
 import registerIntroOutroLogo from './intro-outro-logo'
 import registerSplit from './split'
 import registerTrim from './trim'
@@ -17,6 +18,7 @@ export function registerAllModules(ctx: ModuleContext): void {
     ['super-live', registerSuperLive],
     ['basic-live', registerBasicLive],
     ['render', registerRender],
+    ['upscale', registerUpscale],
     ['intro-outro-logo', registerIntroOutroLogo],
     ['split', registerSplit],
     ['trim', registerTrim],

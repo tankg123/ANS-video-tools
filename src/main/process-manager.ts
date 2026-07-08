@@ -6,7 +6,7 @@ import path from 'node:path'
 import { userDataDir } from './env'
 
 const PID_FILE = path.join(userDataDir, 'pids.json')
-const OUR_IMAGES = new Set(['ffmpeg.exe', 'ffprobe.exe', 'yt-dlp.exe'])
+const OUR_IMAGES = new Set(['ffmpeg.exe', 'ffprobe.exe', 'yt-dlp.exe', 'realesrgan-ncnn-vulkan.exe'])
 
 export interface SpawnOptions {
   cwd?: string

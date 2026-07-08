@@ -5,6 +5,7 @@ export type ModuleKey =
   | 'super-live'
   | 'basic-live'
   | 'render'
+  | 'upscale'
   | 'intro-outro-logo'
   | 'split'
   | 'trim'

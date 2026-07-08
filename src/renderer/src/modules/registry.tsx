@@ -36,6 +36,13 @@ export const MODULES: ModuleDef[] = [
     Component: lazy(() => import('./render/Render'))
   },
   {
+    key: 'upscale',
+    vi: 'Nâng cấp 4K (AI)',
+    en: 'AI Upscale 4K',
+    icon: '✨',
+    Component: lazy(() => import('./upscale/Upscale'))
+  },
+  {
     key: 'intro-outro-logo',
     vi: 'Chèn Intro / Outro / Logo',
     en: 'Intro / Outro / Logo',
