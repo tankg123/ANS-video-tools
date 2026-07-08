@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { MediaInfo } from '@shared/types'
 import type { LoopMode, LoopStartPayload } from '@shared/modules/loop'
 import { fmtBytes, secToHms } from '@shared/time'
-import { invoke, probe } from '../../api'
+import { invoke, pickFiles, probe } from '../../api'
 import { Field, NumInput } from '../../components/Field'
 import { FileDrop } from '../../components/FileDrop'
 import { TaskTable } from '../../components/TaskTable'
@@ -25,6 +25,7 @@ export default function Loop(): React.JSX.Element {
   const [mode, setMode] = useState<LoopMode>('duration')
   const [hours, setHours] = useState(1)
   const [minutes, setMinutes] = useState(0)
+  const [seconds, setSeconds] = useState(0)
   const [count, setCount] = useState(2)
   const [busy, setBusy] = useState(false)
 
@@ -39,7 +40,18 @@ export default function Loop(): React.JSX.Element {
     }
   }
 
-  const targetSec = Math.max(0, hours) * 3600 + Math.max(0, minutes) * 60
+  const clearSource = (): void => {
+    setInput('')
+    setInfo(null)
+  }
+
+  const replaceSource = async (): Promise<void> => {
+    const paths = await pickFiles({ multi: false })
+    if (paths.length) await pick(paths)
+  }
+
+  const targetSec =
+    Math.max(0, hours) * 3600 + Math.max(0, minutes) * 60 + Math.max(0, seconds)
   const srcDur = info?.durationSec ?? 0
   const expectedSec = mode === 'duration' ? targetSec : srcDur * Math.floor(count)
   const valid = !!input && (mode === 'duration' ? targetSec > 0 : Math.floor(count) >= 1)
@@ -85,8 +97,11 @@ export default function Loop(): React.JSX.Element {
                 {info.video?.codec.toUpperCase()} · {fmtBytes(info.sizeBytes)}
               </span>
             )}
-            <button className="btn btn-sm" onClick={() => (setInput(''), setInfo(null))}>
+            <button className="btn btn-sm" onClick={() => void replaceSource()}>
               {t('Chọn lại', 'Change')}
+            </button>
+            <button className="btn btn-sm btn-danger" onClick={clearSource}>
+              🗑 {t('Xoá', 'Clear')}
             </button>
           </div>
         ) : (
@@ -113,12 +128,15 @@ export default function Loop(): React.JSX.Element {
         </div>
 
         {mode === 'duration' ? (
-          <div className="grid-2 mt">
+          <div className="grid-3 mt">
             <Field label={t('Giờ', 'Hours')}>
               <NumInput value={hours} onChange={setHours} min={0} max={240} step={1} />
             </Field>
             <Field label={t('Phút', 'Minutes')}>
               <NumInput value={minutes} onChange={setMinutes} min={0} max={59} step={1} />
+            </Field>
+            <Field label={t('Giây', 'Seconds')}>
+              <NumInput value={seconds} onChange={setSeconds} min={0} max={59} step={1} />
             </Field>
           </div>
         ) : (
