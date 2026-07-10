@@ -1,7 +1,7 @@
 {
   "name": "ans-video-tools",
   "productName": "ANS Video Tools",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Desktop app xử lý video đa năng (All-In-One) — FFmpeg + yt-dlp",
   "main": "./out/main/index.js",
   "author": "ANS Studio",
@@ -14,10 +14,14 @@
     "start": "electron-vite preview",
     "smoke": "electron-vite build && cross-env VT_SMOKE=1 electron .",
     "fetch-bins": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-binaries.ps1",
-    "dist": "electron-vite build && electron-builder --win"
+    "dist": "electron-vite build && electron-builder --win --publish never",
+    "release:patch": "npm version patch --no-git-tag-version && npm run dist",
+    "release:minor": "npm version minor --no-git-tag-version && npm run dist",
+    "release:major": "npm version major --no-git-tag-version && npm run dist"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.5",
+    "electron-updater": "^6.8.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "zustand": "^5.0.14"

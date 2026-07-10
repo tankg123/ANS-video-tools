@@ -1,90 +1,222 @@
-import { app, net } from 'electron'
+import { app } from 'electron'
+import { NsisUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import type { ModuleContext } from '../module-context'
-import type { UpdaterCheckResult } from '@shared/modules/updater'
+import type { AppUpdateState } from '@shared/modules/updater'
+import { EV_APP_UPDATE_STATE } from '@shared/modules/updater'
+
+const AUTO_CHECK_DELAY_MS = 10_000
+const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+interface GithubRepo {
+  owner: string
+  repo: string
+}
+
+function githubRepoFromUrl(raw: string): GithubRepo | null {
+  try {
+    const url = new URL(raw)
+    const parts = url.pathname.split('/').filter(Boolean)
+    if (url.hostname.toLowerCase() === 'api.github.com' && parts[0] === 'repos') {
+      const owner = parts[1]
+      const repo = parts[2]?.replace(/\.git$/i, '')
+      return owner && repo ? { owner, repo } : null
+    }
+    if (url.hostname.toLowerCase() === 'github.com') {
+      const owner = parts[0]
+      const repo = parts[1]?.replace(/\.git$/i, '')
+      return owner && repo ? { owner, repo } : null
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function genericFeedUrl(raw: string): string {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error('URL cập nhật không hợp lệ')
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('URL cập nhật phải bắt đầu bằng http:// hoặc https://')
+  }
+  url.search = ''
+  url.hash = ''
+  url.pathname = url.pathname.replace(/\/latest(?:-[^/]+)?\.ya?ml$/i, '/')
+  return url.toString().replace(/\/$/, '')
+}
+
+function releaseNotes(info: UpdateInfo): string {
+  if (typeof info.releaseNotes === 'string') return info.releaseNotes
+  if (Array.isArray(info.releaseNotes)) {
+    return info.releaseNotes
+      .map((note) => [`v${note.version}`, note.note ?? ''].filter(Boolean).join('\n'))
+      .join('\n\n')
+  }
+  return info.releaseName ?? ''
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 /**
- * Module Kiểm tra cập nhật (spec 4.11):
- * - 'mod:updater:check'  — GET settings.updateUrl (định dạng GitHub Releases API),
- *   so sánh semver với app.getVersion() → changelog + link tải bản mới
- * - 'mod:updater:ytdlp'  — chạy 'yt-dlp -U' (task pool 'misc', type 'ytdlp-update')
- * Trạng thái/tải binaries dùng core sẵn có: core:bins:status / core:bins:fetch.
+ * App updater:
+ * - Windows NSIS packaged build only.
+ * - Accepts a GitHub repository/releases URL or a generic feed containing latest.yml.
+ * - Checks automatically after startup and every six hours.
+ * - Downloads automatically; installs on normal app exit or via quitAndInstall.
  */
-
-/** JSON tối thiểu của GitHub release (updateUrl có thể trỏ .../releases/latest hoặc .../releases) */
-interface GithubReleaseJson {
-  tag_name?: string
-  name?: string
-  body?: string
-  html_url?: string
-  assets?: { name?: string; browser_download_url?: string }[]
-}
-
-/** 'v1.2.10' → [1, 2, 10]; chuỗi không có số → [] */
-function verParts(v: string): number[] {
-  const m = String(v).trim().replace(/^v/i, '').match(/\d+(?:\.\d+)*/)
-  return m ? m[0].split('.').map((n) => parseInt(n, 10)) : []
-}
-
-/** So sánh semver đơn giản: >0 nếu a > b */
-function cmpVer(a: string, b: string): number {
-  const pa = verParts(a)
-  const pb = verParts(b)
-  const len = Math.max(pa.length, pb.length)
-  for (let i = 0; i < len; i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
-    if (d !== 0) return d > 0 ? 1 : -1
-  }
-  return 0
-}
-
 export default function register(ctx: ModuleContext): void {
-  // ---- 4.11a: kiểm tra phiên bản ứng dụng ----
-  ctx.handle('mod:updater:check', async (): Promise<UpdaterCheckResult> => {
-    const current = app.getVersion()
-    const url = (ctx.settings.all().updateUrl ?? '').trim()
-    if (!url) return { configured: false, current }
+  const current = app.getVersion()
+  const isSupported = app.isPackaged && process.platform === 'win32'
+  const configuredUrl = (): string => (ctx.settings.all().updateUrl ?? '').trim()
 
-    let res: Awaited<ReturnType<typeof net.fetch>>
-    try {
-      res = await net.fetch(url, {
-        headers: { Accept: 'application/vnd.github+json' },
-        signal: AbortSignal.timeout(15000)
-      })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      throw new Error(`Không thể kết nối máy chủ cập nhật: ${msg}`)
-    }
-    if (!res.ok) throw new Error(`Máy chủ cập nhật trả về HTTP ${res.status}`)
+  let state: AppUpdateState = {
+    configured: configuredUrl() !== '',
+    supported: isSupported,
+    phase: isSupported && configuredUrl() ? 'idle' : 'disabled',
+    current
+  }
+  let updater: NsisUpdater | null = null
+  let updaterUrl = ''
 
-    let release: GithubReleaseJson
-    try {
-      const parsed = (await res.json()) as GithubReleaseJson | GithubReleaseJson[]
-      // updateUrl trỏ .../releases (mảng) thì lấy release mới nhất (phần tử đầu)
-      release = Array.isArray(parsed) ? (parsed[0] ?? {}) : parsed
-    } catch {
-      throw new Error('Phản hồi không phải JSON hợp lệ (cần định dạng GitHub Releases API)')
-    }
-
-    const latestRaw = release.tag_name || release.name || ''
-    if (!latestRaw) {
-      throw new Error('Không tìm thấy tag_name trong phản hồi — kiểm tra lại URL cập nhật trong Cài đặt')
-    }
-    const latest = latestRaw.replace(/^v/i, '')
-    const link =
-      release.html_url ||
-      release.assets?.find((a) => a.browser_download_url)?.browser_download_url ||
-      ''
-    return {
-      configured: true,
-      current,
-      latest,
-      changelog: release.body ?? '',
-      url: link,
-      hasUpdate: cmpVer(latest, current) > 0
-    }
+  const snapshot = (): AppUpdateState => ({
+    ...state,
+    configured: configuredUrl() !== '',
+    supported: isSupported,
+    progress: state.progress ? { ...state.progress } : undefined
   })
 
-  // ---- 4.11b: cập nhật yt-dlp ('yt-dlp -U') — site đổi API liên tục ----
+  const patchState = (patch: Partial<AppUpdateState>): void => {
+    state = { ...state, ...patch, configured: configuredUrl() !== '', supported: isSupported }
+    ctx.send(EV_APP_UPDATE_STATE, snapshot())
+  }
+
+  const wireUpdater = (instance: NsisUpdater): void => {
+    instance.autoDownload = true
+    instance.autoInstallOnAppQuit = true
+    instance.autoRunAppAfterInstall = true
+    instance.allowPrerelease = false
+    instance.allowDowngrade = false
+    instance.disableWebInstaller = true
+    instance.logger = console
+
+    instance.on('checking-for-update', () => {
+      patchState({ phase: 'checking', error: undefined, progress: undefined })
+    })
+    instance.on('update-available', (info: UpdateInfo) => {
+      patchState({
+        phase: 'available',
+        latest: info.version,
+        changelog: releaseNotes(info),
+        checkedAt: Date.now(),
+        error: undefined,
+        progress: undefined
+      })
+    })
+    instance.on('update-not-available', (info: UpdateInfo) => {
+      patchState({
+        phase: 'up-to-date',
+        latest: info.version,
+        changelog: releaseNotes(info),
+        checkedAt: Date.now(),
+        error: undefined,
+        progress: undefined
+      })
+    })
+    instance.on('download-progress', (progress: ProgressInfo) => {
+      patchState({
+        phase: 'downloading',
+        progress: {
+          percent: progress.percent,
+          transferred: progress.transferred,
+          total: progress.total,
+          bytesPerSecond: progress.bytesPerSecond
+        },
+        error: undefined
+      })
+    })
+    instance.on('update-downloaded', (info: UpdateInfo) => {
+      patchState({
+        phase: 'downloaded',
+        latest: info.version,
+        changelog: releaseNotes(info),
+        progress: state.progress ? { ...state.progress, percent: 100 } : undefined,
+        error: undefined
+      })
+    })
+    instance.on('update-cancelled', () => {
+      patchState({ phase: 'error', error: 'Quá trình tải bản cập nhật đã bị hủy' })
+    })
+    instance.on('error', (error: Error) => {
+      patchState({ phase: 'error', error: messageOf(error) })
+    })
+  }
+
+  const getUpdater = (): NsisUpdater => {
+    if (!isSupported) {
+      throw new Error('Tự cập nhật chỉ hoạt động trong bản Windows đã được đóng gói và cài đặt')
+    }
+    const raw = configuredUrl()
+    if (!raw) throw new Error('Chưa cấu hình URL cập nhật trong Cài đặt')
+    if (updater && updaterUrl === raw) return updater
+
+    const github = githubRepoFromUrl(raw)
+    const instance = github
+      ? new NsisUpdater({ provider: 'github', owner: github.owner, repo: github.repo })
+      : new NsisUpdater({ provider: 'generic', url: genericFeedUrl(raw) })
+    instance.fullChangelog = !!github
+    wireUpdater(instance)
+    updater = instance
+    updaterUrl = raw
+    return instance
+  }
+
+  const checkForUpdates = async (background = false): Promise<AppUpdateState> => {
+    if (!configuredUrl() || !isSupported) {
+      patchState({ phase: 'disabled', error: undefined, progress: undefined })
+      if (background) return snapshot()
+      if (!configuredUrl()) throw new Error('Chưa cấu hình URL cập nhật trong Cài đặt')
+      return snapshot()
+    }
+
+    try {
+      patchState({ phase: 'checking', error: undefined, progress: undefined })
+      await getUpdater().checkForUpdates()
+      return snapshot()
+    } catch (error) {
+      const message = messageOf(error)
+      patchState({ phase: 'error', error: message })
+      if (!background) throw new Error(`Không thể kiểm tra cập nhật: ${message}`)
+      return snapshot()
+    }
+  }
+
+  ctx.handle('mod:updater:state', async () => snapshot())
+  ctx.handle('mod:updater:check', async () => checkForUpdates(false))
+  ctx.handle('mod:updater:download', async () => {
+    const instance = getUpdater()
+    patchState({ phase: 'downloading', error: undefined, progress: undefined })
+    try {
+      await instance.downloadUpdate()
+      return snapshot()
+    } catch (error) {
+      const message = messageOf(error)
+      patchState({ phase: 'error', error: message })
+      throw new Error(`Không thể tải bản cập nhật: ${message}`)
+    }
+  })
+  ctx.handle('mod:updater:install', async () => {
+    if (state.phase !== 'downloaded') throw new Error('Bản cập nhật chưa tải xong')
+    const instance = getUpdater()
+    setTimeout(() => instance.quitAndInstall(false, true), 250)
+    return true
+  })
+
+  // Cập nhật yt-dlp ('yt-dlp -U') — site đổi API liên tục.
   ctx.handle('mod:updater:ytdlp', async () => {
     const bin = ctx.resolveBin('yt-dlp')
     if (!bin) throw new Error('Không tìm thấy yt-dlp — hãy bấm "Tải FFmpeg + yt-dlp" trước')
@@ -98,16 +230,15 @@ export default function register(ctx: ModuleContext): void {
           let lastLine = ''
           const { child } = ctx.pm.spawnManaged(bin, ['-U'], {
             onLine: (line) => {
-              const s = line.trim()
-              if (!s) return
-              lastLine = s
-              // queue đã throttle broadcast 4Hz nên update mỗi dòng là an toàn
-              api.update({ detail: s.slice(0, 200) })
+              const text = line.trim()
+              if (!text) return
+              lastLine = text
+              api.update({ detail: text.slice(0, 200) })
             }
           })
           api.update({ pid: child.pid })
           api.setCancelHook(() => ctx.pm.killTree(child.pid))
-          child.on('error', (e) => reject(e))
+          child.on('error', (error) => reject(error))
           child.on('close', (code) => {
             if (api.isCancelled()) return resolve()
             if (code !== 0) return reject(new Error(`yt-dlp -U thoát mã ${code}: ${lastLine}`))
@@ -117,4 +248,9 @@ export default function register(ctx: ModuleContext): void {
         })
     })
   })
+
+  if (isSupported) {
+    setTimeout(() => void checkForUpdates(true), AUTO_CHECK_DELAY_MS)
+    setInterval(() => void checkForUpdates(true), AUTO_CHECK_INTERVAL_MS)
+  }
 }

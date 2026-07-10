@@ -2,9 +2,8 @@ import { create } from 'zustand'
 import type { SystemStats, ToastMsg } from '@shared/types'
 
 export type ModuleKey =
-  | 'super-live'
-  | 'basic-live'
   | 'render'
+  | 'remove-audio'
   | 'upscale'
   | 'intro-outro-logo'
   | 'split'
@@ -12,8 +11,21 @@ export type ModuleKey =
   | 'green-screen'
   | 'loop'
   | 'concat'
+  | 'random'
+  | 'random-audio'
   | 'downloader'
   | 'updater'
+
+const LEGACY_LIVE_MODULES = new Set(['super-live', 'basic-live', 'drive-live'])
+
+function initialModule(): ModuleKey {
+  const saved = localStorage.getItem('vt.activeModule')
+  if (saved && LEGACY_LIVE_MODULES.has(saved)) {
+    localStorage.setItem('vt.activeModule', 'downloader')
+    return 'downloader'
+  }
+  return (saved as ModuleKey) || 'downloader'
+}
 
 interface Toast extends ToastMsg {
   id: number
@@ -34,7 +46,7 @@ interface UiState {
 let toastSeq = 1
 
 export const useUi = create<UiState>((set, get) => ({
-  active: (localStorage.getItem('vt.activeModule') as ModuleKey) || 'downloader',
+  active: initialModule(),
   setActive: (k) => {
     localStorage.setItem('vt.activeModule', k)
     set({ active: k })

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import logoUrl from '../assets/ans-logo.png'
 import { killAllFfmpeg } from '../api'
 import { useT } from '../i18n'
 import { useSettings } from '../store/settings'
@@ -37,7 +38,13 @@ export function Header(): React.JSX.Element {
   return (
     <header className="header">
       <div className="brand">
-        <span className="brand-mark">🎬</span>
+        <span className="brand-mark" style={{ padding: 0, overflow: 'hidden' }}>
+          <img
+            src={logoUrl}
+            alt="ANS"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          />
+        </span>
         <span className="brand-name">
           <b>ANS</b> Video Tools
         </span>
@@ -73,8 +80,8 @@ export function Header(): React.JSX.Element {
         >
           <p className="text-dim">
             {t(
-              'Mọi tác vụ render/cắt/ghép và livestream đang chạy sẽ bị dừng ngay lập tức (bao gồm process mồ côi). Tác vụ tải video không bị ảnh hưởng.',
-              'All running render/cut/concat tasks and livestreams will be terminated immediately (including orphaned processes). Downloads are not affected.'
+              'Mọi tác vụ FFmpeg đang chạy sẽ bị dừng ngay lập tức (bao gồm process mồ côi). Tác vụ tải video không bị ảnh hưởng.',
+              'All running FFmpeg tasks will be terminated immediately (including orphaned processes). Downloads are not affected.'
             )}
           </p>
         </Modal>

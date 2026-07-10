@@ -2,8 +2,15 @@ appId: com.ansstudio.ansvideotools
 productName: ANS Video Tools
 directories:
   output: release
+artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+publish:
+  - provider: generic
+    # Runtime settings.updateUrl overrides this placeholder.
+    # Keeping a provider here makes electron-builder generate latest.yml + blockmap.
+    url: https://updates.invalid/ans-video-tools
 files:
   - out/**
+  - resources/**
   - package.json
 extraResources:
   - from: bin
@@ -11,9 +18,15 @@ extraResources:
     filter: ['**/*.exe']
 asar: true
 win:
+  icon: build/icon.ico
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  differentialPackage: true
   shortcutName: ANS Video Tools
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico

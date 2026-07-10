@@ -17,7 +17,6 @@ function defaults(): AppSettings {
     downloadDir: path.join(os.homedir(), 'Downloads'),
     maxFfmpeg: Math.max(1, Math.floor(os.cpus().length / 2)),
     maxDownloads: 2,
-    maxLive: 5,
     encoderPref: 'auto',
     autoStart: false,
     updateUrl: ''
@@ -69,9 +68,16 @@ export class SettingsStore {
   private kvSaver = new DebouncedJsonFile(KV_FILE, () => this.kv)
 
   load(): void {
+    let settingsMigrated = false
+    let kvMigrated = false
     try {
       if (fs.existsSync(FILE)) {
-        this.data = deepMerge(defaults(), JSON.parse(fs.readFileSync(FILE, 'utf8')))
+        const saved = JSON.parse(fs.readFileSync(FILE, 'utf8')) as Record<string, unknown>
+        if ('maxLive' in saved) {
+          delete saved.maxLive
+          settingsMigrated = true
+        }
+        this.data = deepMerge(defaults(), saved)
       }
     } catch (e) {
       console.error('settings load failed:', e)
@@ -79,10 +85,18 @@ export class SettingsStore {
     try {
       if (fs.existsSync(KV_FILE)) {
         this.kv = JSON.parse(fs.readFileSync(KV_FILE, 'utf8'))
+        for (const legacyNs of ['super-live', 'basic-live', 'drive-live']) {
+          if (legacyNs in this.kv) {
+            delete this.kv[legacyNs]
+            kvMigrated = true
+          }
+        }
       }
     } catch {
       this.kv = {}
     }
+    if (settingsMigrated) this.saver.schedule()
+    if (kvMigrated) this.kvSaver.schedule()
   }
 
   all(): AppSettings {

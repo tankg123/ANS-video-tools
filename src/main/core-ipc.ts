@@ -48,7 +48,7 @@ export function registerCoreIpc(ctx: ModuleContext, getWin: () => BrowserWindow 
   ctx.handle('core:settings:get', () => settings.all())
   ctx.handle('core:settings:set', (patch: Partial<AppSettings>) => {
     const s = settings.set(patch)
-    queue.applySettingsLimits(s.maxFfmpeg, s.maxDownloads, s.maxLive)
+    queue.applySettingsLimits(s.maxFfmpeg, s.maxDownloads)
     if (typeof patch.autoStart === 'boolean') {
       try {
         app.setLoginItemSettings({ openAtLogin: patch.autoStart })

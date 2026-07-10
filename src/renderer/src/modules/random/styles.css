@@ -1,0 +1,163 @@
+/* Ghép Video Ngẫu Nhiên — lưới tile kéo-thả + dải xem trước.
+   Chỉ dùng biến màu có sẵn trong app.css, không override class chung. */
+
+.rnd-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.rnd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
+  gap: 10px;
+}
+
+.rnd-tile {
+  position: relative;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--card-2);
+  overflow: hidden;
+  cursor: grab;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.12s ease;
+}
+.rnd-tile:active {
+  cursor: grabbing;
+}
+.rnd-tile.lead {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+.rnd-tile.dragover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+.rnd-tile.dragging {
+  opacity: 0.4;
+}
+
+.rnd-thumb-wrap {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--bg-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rnd-thumb-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.rnd-thumb-ph {
+  font-size: 22px;
+  opacity: 0.45;
+}
+
+.rnd-order {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  line-height: 1.4;
+}
+.rnd-order.lead {
+  background: var(--accent);
+}
+
+.rnd-tile-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.rnd-tile:hover .rnd-tile-actions,
+.rnd-tile:focus-within .rnd-tile-actions {
+  opacity: 1;
+}
+
+.rnd-meta {
+  padding: 7px 8px 8px;
+}
+.rnd-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  max-width: 100%;
+}
+.rnd-sub {
+  margin-top: 3px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+/* ---- Dải xem trước ---- */
+.rnd-preview {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+.rnd-preview-head {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.rnd-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+.rnd-strip-item {
+  flex: 0 0 auto;
+  width: 118px;
+}
+.rnd-strip-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--bg-1);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rnd-strip-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.rnd-strip-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+.rnd-strip-badge.lead {
+  background: var(--accent);
+}
+.rnd-strip-name {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  max-width: 100%;
+}

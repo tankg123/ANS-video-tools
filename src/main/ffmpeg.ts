@@ -9,7 +9,7 @@ export interface FfmpegTaskOptions {
   type: string
   title: string
   args: string[]
-  /** tổng thời lượng output (giây) để tính %; bỏ trống = indeterminate (live) */
+  /** tổng thời lượng output (giây) để tính %; bỏ trống = indeterminate */
   durationSec?: number
   pool?: TaskPool
   outputPath?: string
@@ -155,7 +155,7 @@ export function enqueueYtdlp(o: YtdlpTaskOptions): string {
 
 /** Nút đỏ KILL ALL FFMPEG (spec mục 2) — KHÔNG đụng pool/process tải video ('download'). */
 export async function killAllFfmpeg(): Promise<{ cancelledTasks: number; killedProcesses: number }> {
-  const cancelledTasks = queue.cancelPools(['ffmpeg', 'live', 'misc'])
+  const cancelledTasks = queue.cancelPools(['ffmpeg', 'misc'])
   const killedProcesses = pm.killAllTracked(new Set(['download']))
   const orphans = await pm.orphanCleanup()
   return { cancelledTasks, killedProcesses: killedProcesses + orphans }

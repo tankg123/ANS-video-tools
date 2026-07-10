@@ -31,7 +31,7 @@ function execFileP(cmd: string, args: string[]): Promise<string> {
  * - kill cả process tree (taskkill /T /F)
  */
 export class ProcessManager {
-  /** pid → tag ('download', 'ffmpeg', 'live', 'misc'...) */
+  /** pid → tag ('download', 'ffmpeg', 'misc'...) */
   private pids = new Map<number, string>()
 
   spawnManaged(bin: string, args: string[], opts: SpawnOptions = {}): { child: ChildProcess } {

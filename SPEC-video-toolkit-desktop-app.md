@@ -61,18 +61,20 @@
 
 ### 3.1. Layout chính
 - **Header (trên cùng):** Logo + tên app │ nút đỏ `KILL ALL FFMPEG` │ bên phải: `Xin chào, {tên user}` │ `HSD: {hạn dùng / Không giới hạn}`.
-- **Sidebar (trái):** 11 mục điều hướng, mục đang chọn được highlight:
-  1. Super Live Stream
-  2. Basic Live Stream
-  3. Render H264/H265
+- **Sidebar (trái):** 13 mục điều hướng, mục đang chọn được highlight:
+  1. Render H264/H265
+  2. Xóa Audio khỏi Video
+  3. Nâng cấp 4K (AI)
   4. Chèn Intro / Outro / Logo
   5. Cắt chia nhỏ Video
   6. Cắt ngắn Video
   7. Chèn Phông Xanh
   8. Lặp lại Video
   9. Ghép nối Video
-  10. Tải Video
-  11. Kiểm tra cập nhật (dưới cùng)
+  10. Ghép Video Ngẫu Nhiên
+  11. Ghép Âm Thanh Ngẫu Nhiên
+  12. Tải Video
+  13. Kiểm tra cập nhật (dưới cùng)
 - **Status bar (dưới cùng):** bản quyền + version │ liên kết mạng xã hội │ hotline │ nút chuyển ngôn ngữ VI/EN │ **đồng hồ RAM còn trống (%) và CPU (%)** cập nhật mỗi 2 giây.
 
 ### 3.2. Theme
@@ -82,16 +84,6 @@
 ---
 
 ## 4. ĐẶC TẢ CHỨC NĂNG CHI TIẾT
-
-### 4.1. Super Live Stream (phát trực tiếp nhiều luồng song song)
-- Bảng danh sách luồng, mỗi dòng: nguồn video (file/thư mục/playlist) │ RTMP URL + Stream Key │ trạng thái │ thời gian đã phát │ nút Start/Stop riêng.
-- Cho phép chạy **nhiều luồng đồng thời** (giới hạn theo cấu hình máy, mặc định 5).
-- Tùy chọn mỗi luồng: loop vô hạn, phát ngẫu nhiên, lịch hẹn giờ bắt đầu/kết thúc, bitrate, độ phân giải, encoder (copy / x264 / NVENC).
-- **Chế độ `-c copy`** khi video đã đúng chuẩn (H264 + AAC): CPU gần như 0%.
-- Tự động reconnect khi rớt mạng (`-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5`).
-
-### 4.2. Basic Live Stream
-- Bản rút gọn: 1 nguồn video → 1 RTMP đích. Form đơn giản: chọn file, nhập RTMP/key, chọn loop, nút Start/Stop, log realtime.
 
 ### 4.3. Render H264/H265
 - Kéo-thả nhiều file/thư mục vào danh sách.
@@ -144,7 +136,8 @@
 - Danh sách được lưu (persist) — mở lại app vẫn còn.
 
 ### 4.11. Kiểm tra cập nhật
-- Gọi API endpoint (hoặc GitHub Releases) so sánh version → hiện dialog changelog + nút tải bản mới.
+- Tự kiểm tra GitHub Releases hoặc generic `latest.yml` feed sau khi khởi động và định kỳ mỗi 6 giờ.
+- Khi có bản mới: tự tải installer, hiển thị tiến trình, cho phép cài đặt + khởi động lại; nếu đóng app sau khi tải xong thì tự cài.
 - Kèm nút "Cập nhật yt-dlp" (`yt-dlp -U`) vì các site đổi API liên tục.
 
 ### 4.12. Hệ thống chung
@@ -161,7 +154,7 @@
 - Với NVENC: dùng `-hwaccel cuda -hwaccel_output_format cuda` để decode + encode đều trên GPU, tránh copy dữ liệu qua RAM.
 
 ### 5.2. Tránh re-encode khi không cần
-- Cắt / chia / lặp / ghép (cùng codec) / livestream chuẩn: luôn ưu tiên `-c copy` → nhanh gấp 50–100 lần, CPU ~0%.
+- Cắt / chia / lặp / ghép (cùng codec) / xóa audio: luôn ưu tiên `-c copy` → nhanh gấp 50–100 lần, CPU ~0%.
 - Trước mỗi tác vụ, chạy `ffprobe` để quyết định copy hay re-encode, hiển thị cho user biết chế độ nào đang dùng.
 
 ### 5.3. Quản lý tiến trình & hàng đợi
@@ -195,9 +188,8 @@
 video-toolkit/
 ├── src/                      # Frontend React
 │   ├── modules/
-│   │   ├── super-live/
-│   │   ├── basic-live/
 │   │   ├── render/
+│   │   ├── remove-audio/
 │   │   ├── intro-outro-logo/
 │   │   ├── split/
 │   │   ├── trim/
@@ -228,7 +220,7 @@ video-toolkit/
 | Phase 1 | Khung app: layout, sidebar, TaskQueue, ProcessManager, KILL ALL, dò GPU | ⭐⭐⭐ |
 | Phase 2 | **Tải Video** (module đầy đủ như ảnh) + Cắt ngắn + Cắt chia nhỏ | ⭐⭐⭐ |
 | Phase 3 | Render H264/H265 + Ghép nối + Lặp lại | ⭐⭐ |
-| Phase 4 | Basic Live Stream → Super Live Stream (multi-stream, hẹn giờ) | ⭐⭐ |
+| Phase 4 | Xóa Audio + Nâng cấp 4K + Ghép ngẫu nhiên | ⭐⭐ |
 | Phase 5 | Chèn Intro/Outro/Logo + Phông Xanh (có preview) | ⭐ |
 | Phase 6 | License/HSD, kiểm tra cập nhật, i18n, đóng gói installer | ⭐ |
 

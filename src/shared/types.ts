@@ -3,7 +3,7 @@
 // KHÔNG import gì từ electron/node ở đây.
 // ============================================================
 
-export type TaskPool = 'ffmpeg' | 'download' | 'live' | 'misc'
+export type TaskPool = 'ffmpeg' | 'download' | 'misc'
 
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'error' | 'killed'
 
@@ -14,7 +14,7 @@ export interface TaskInfo {
   title: string
   pool: TaskPool
   status: TaskStatus
-  /** 0..100, hoặc -1 = indeterminate (livestream / không rõ tổng) */
+  /** 0..100, hoặc -1 = indeterminate (không rõ tổng) */
   progress: number
   speed?: string
   eta?: string
@@ -88,7 +88,6 @@ export interface AppSettings {
   downloadDir: string
   maxFfmpeg: number
   maxDownloads: number
-  maxLive: number
   encoderPref: 'auto' | 'nvenc' | 'qsv' | 'amf' | 'x264'
   autoStart: boolean
   updateUrl: string

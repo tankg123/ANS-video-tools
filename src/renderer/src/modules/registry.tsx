@@ -15,25 +15,18 @@ export interface ModuleDef {
  */
 export const MODULES: ModuleDef[] = [
   {
-    key: 'super-live',
-    vi: 'Super Live Stream',
-    en: 'Super Live Stream',
-    icon: '📡',
-    Component: lazy(() => import('./super-live/SuperLive'))
-  },
-  {
-    key: 'basic-live',
-    vi: 'Basic Live Stream',
-    en: 'Basic Live Stream',
-    icon: '🎥',
-    Component: lazy(() => import('./basic-live/BasicLive'))
-  },
-  {
     key: 'render',
     vi: 'Render H264/H265',
     en: 'Render H264/H265',
     icon: '🎞️',
     Component: lazy(() => import('./render/Render'))
+  },
+  {
+    key: 'remove-audio',
+    vi: 'X\u00f3a Audio kh\u1ecfi Video',
+    en: 'Remove Audio',
+    icon: '\u{1F507}',
+    Component: lazy(() => import('./remove-audio/RemoveAudio'))
   },
   {
     key: 'upscale',
@@ -83,6 +76,20 @@ export const MODULES: ModuleDef[] = [
     en: 'Concat Videos',
     icon: '🧩',
     Component: lazy(() => import('./concat/Concat'))
+  },
+  {
+    key: 'random',
+    vi: 'Ghép Video Ngẫu Nhiên',
+    en: 'Random Merge',
+    icon: '🎲',
+    Component: lazy(() => import('./random/Random'))
+  },
+  {
+    key: 'random-audio',
+    vi: 'Ghép Âm Thanh Ngẫu Nhiên',
+    en: 'Random Audio Merge',
+    icon: '🎧',
+    Component: lazy(() => import('./random-audio/RandomAudio'))
   },
   {
     key: 'downloader',

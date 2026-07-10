@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
+import appIcon from '../../resources/icon.png?asset'
 import { registerCoreIpc } from './core-ipc'
 import { ensureDirs } from './env'
 import { detectHardware } from './hardware'
@@ -24,6 +25,7 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#0a0e17',
     title: 'ANS Video Tools',
+    icon: appIcon,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -68,7 +70,7 @@ if (!app.requestSingleInstanceLock()) {
     pm.orphanCleanup().catch(() => {})
 
     const s = settings.all()
-    queue.applySettingsLimits(s.maxFfmpeg, s.maxDownloads, s.maxLive)
+    queue.applySettingsLimits(s.maxFfmpeg, s.maxDownloads)
 
     const ctx = createModuleContext()
     registerCoreIpc(ctx, () => mainWindow)

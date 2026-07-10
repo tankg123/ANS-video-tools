@@ -1,4 +1,4 @@
-/** value: 0..100, hoặc -1 = indeterminate (livestream) */
+/** value: 0..100, hoặc -1 = indeterminate */
 export function ProgressBar({ value, label }: { value: number; label?: string }): React.JSX.Element {
   const indet = value < 0
   return (

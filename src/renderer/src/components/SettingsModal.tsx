@@ -40,7 +40,6 @@ export function SettingsModal(): React.JSX.Element | null {
       downloadDir: draft.downloadDir,
       maxFfmpeg: draft.maxFfmpeg,
       maxDownloads: draft.maxDownloads,
-      maxLive: draft.maxLive,
       encoderPref: draft.encoderPref,
       autoStart: draft.autoStart,
       updateUrl: draft.updateUrl
@@ -100,9 +99,6 @@ export function SettingsModal(): React.JSX.Element | null {
           <Field label={t('Số video tải cùng lúc', 'Concurrent downloads')}>
             <NumInput value={draft.maxDownloads} min={1} max={10} onChange={(v) => setDraft({ ...draft, maxDownloads: v })} />
           </Field>
-          <Field label={t('Số luồng live tối đa', 'Max live streams')}>
-            <NumInput value={draft.maxLive} min={1} max={20} onChange={(v) => setDraft({ ...draft, maxLive: v })} />
-          </Field>
           <Field label={t('Encoder ưu tiên', 'Preferred encoder')}>
             <Select
               value={draft.encoderPref}
@@ -116,10 +112,16 @@ export function SettingsModal(): React.JSX.Element | null {
               ]}
             />
           </Field>
-          <Field label={t('URL kiểm tra cập nhật', 'Update check URL')}>
+          <Field
+            label={t('Nguồn tự cập nhật', 'Auto-update source')}
+            hint={t(
+              'URL GitHub repository/releases hoặc thư mục HTTPS chứa latest.yml',
+              'GitHub repository/releases URL or an HTTPS folder containing latest.yml'
+            )}
+          >
             <input
               className="input"
-              placeholder="https://api.github.com/repos/.../releases/latest"
+              placeholder="https://github.com/owner/repo/releases"
               value={draft.updateUrl}
               onChange={(e) => setDraft({ ...draft, updateUrl: e.target.value })}
             />

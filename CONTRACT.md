@@ -30,13 +30,13 @@ ctx.handle('mod:<key>:<action>', async (payload) => result)  // đăng ký IPC, 
 ctx.send('mod:<key>:<event>', data)                          // push event về renderer
 ctx.enqueueFfmpeg({ type: '<key>', title, args, durationSec?, pool?, outputPath?, meta? }) // → taskId
    // tự thêm '-hide_banner -nostdin -y'; durationSec để tính %; bỏ trống = indeterminate (-1)
-   // pool: 'ffmpeg' (mặc định, render/cắt), 'live' (stream dài hạn)
+   // pool: 'ffmpeg' (mặc định, render/cắt) hoặc 'misc'
 ctx.enqueueYtdlp({ title, args, meta?, onLine?(line, api) }) // → taskId, pool 'download'
 ctx.probe(path)            // Promise<MediaInfo> — duration/codec/resolution (xem @shared/types)
 ctx.pickEncoder('h264'|'hevc') // Promise<string> — encoder tốt nhất theo settings + phần cứng đã dò
 ctx.detectHardware()       // Promise<HwInfo>
 ctx.resolveBin('ffmpeg'|'ffprobe'|'yt-dlp') // string | null
-ctx.settings.all()         // AppSettings (outputDir, downloadDir, maxLive, ...)
+ctx.settings.all()         // AppSettings (outputDir, downloadDir, maxFfmpeg, ...)
 ctx.kv('<key>')            // { get(k, def), set(k, v) } — persist bền vững (debounce 1s), dùng cho danh sách cần lưu
 ctx.deriveOutput(input, suffix, outDir?, ext?) // sinh path output không ghi đè
 ctx.scanVideoDir(dir)      // string[] file video đệ quy
@@ -49,12 +49,12 @@ ctx.pm                     // ProcessManager: .spawnManaged(bin, args, {onLine})
 **Quy ước ffmpeg args:** mảng string, KHÔNG tự quote path (spawn không qua shell). KHÔNG thêm `-y`/`-hide_banner` (enqueueFfmpeg tự thêm).
 
 **Tối ưu bắt buộc (spec mục 5):**
-- Ưu tiên `-c copy` khi không cần re-encode (cắt/ghép cùng codec/lặp/stream chuẩn H264+AAC). Dùng `ctx.probe()` để quyết định, ghi rõ chế độ vào `meta.mode` ('copy' | 're-encode') và hiện trên UI.
+- Ưu tiên `-c copy` khi không cần re-encode (cắt/ghép cùng codec/lặp/xóa audio). Dùng `ctx.probe()` để quyết định, ghi rõ chế độ vào `meta.mode` ('copy' | 're-encode') và hiện trên UI.
 - Re-encode: dùng `ctx.pickEncoder()`. Với `libx264`: `-preset veryfast -crf <n>`; encoder phần cứng: `-cq <n>` hoặc `-b:v`.
 
-**Task chạy dài không rõ tổng (livestream):** bỏ `durationSec` → progress -1 (indeterminate). UI hiển thị đồng hồ elapsed tự động trong TaskTable.
+**Task không rõ tổng thời lượng:** bỏ `durationSec` → progress -1 (indeterminate). UI hiển thị đồng hồ elapsed tự động trong TaskTable.
 
-**Tự quản process ngoài queue (nếu thật sự cần, vd live stream có restart):** vẫn PHẢI dùng `ctx.pm.spawnManaged` (để KILL ALL và orphan-cleanup hoạt động) và nên bọc trong task pool 'live'.
+**Tự quản process ngoài queue (nếu thật sự cần):** vẫn PHẢI dùng `ctx.pm.spawnManaged` để KILL ALL và orphan-cleanup hoạt động, đồng thời bọc trong task pool phù hợp.
 
 ## 3. Frontend — API renderer (`src/renderer/src/api.ts`)
 
@@ -106,7 +106,7 @@ export default function <Name>(): React.JSX.Element {
 
 ## 6. Persist dữ liệu module
 
-- Cần lưu qua phiên (danh sách download, cấu hình luồng live...): backend dùng `ctx.kv('<key>')`, hoặc renderer dùng `kvGet/kvSet(ns, key, value)`.
+- Cần lưu qua phiên (danh sách download, thư mục xuất theo module...): backend dùng `ctx.kv('<key>')`, hoặc renderer dùng `kvGet/kvSet(ns, key, value)`.
 - State tạm trong phiên: `useState` hoặc store zustand riêng trong thư mục module.
 
 ## 7. Điều cấm kỵ

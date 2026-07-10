@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
-import type { UpdaterCheckResult } from '@shared/modules/updater'
-import { appInfo, binsStatus, fetchBins, invoke, openExternal } from '../../api'
+import type { AppUpdateState } from '@shared/modules/updater'
+import { EV_APP_UPDATE_STATE } from '@shared/modules/updater'
+import { fmtBytes } from '@shared/time'
+import { appInfo, binsStatus, fetchBins, invoke, invokeSilent, on } from '../../api'
+import { ProgressBar } from '../../components/ProgressBar'
 import { TaskTable } from '../../components/TaskTable'
 import { useT } from '../../i18n'
 import { useSettings } from '../../store/settings'
@@ -17,7 +20,7 @@ function shortVer(s: string | null | undefined): string {
 
 /**
  * Module Kiểm tra cập nhật (spec 4.11):
- * - kiểm tra phiên bản app qua settings.updateUrl (GitHub Releases API) → changelog + nút tải
+ * - tự kiểm tra/tải/cài bản app mới qua GitHub Releases hoặc generic latest.yml feed
  * - trạng thái binaries (ffmpeg/ffprobe/yt-dlp) + Cập nhật yt-dlp + Tải FFmpeg + yt-dlp
  */
 export default function Updater(): React.JSX.Element {
@@ -26,8 +29,8 @@ export default function Updater(): React.JSX.Element {
   const updateUrl = useSettings((s) => s.settings?.updateUrl ?? '')
 
   const [version, setVersion] = useState('')
-  const [check, setCheck] = useState<UpdaterCheckResult | null>(null)
-  const [checking, setChecking] = useState(false)
+  const [update, setUpdate] = useState<AppUpdateState | null>(null)
+  const [updateBusy, setUpdateBusy] = useState(false)
   const [bins, setBins] = useState<BinsInfo | null>(null)
   const [binsBusy, setBinsBusy] = useState(false)
 
@@ -42,11 +45,21 @@ export default function Updater(): React.JSX.Element {
         : n
     }, 0)
   )
+  const activeTaskCount = useTasks((s) =>
+    s.order.reduce((count, id) => {
+      const task = s.byId[id]
+      return task && (task.status === 'queued' || task.status === 'running') ? count + 1 : count
+    }, 0)
+  )
 
   useEffect(() => {
     void appInfo()
       .then((i) => setVersion(i.version))
       .catch(() => {})
+    void invokeSilent<AppUpdateState>('mod:updater:state')
+      .then(setUpdate)
+      .catch(() => {})
+    return on(EV_APP_UPDATE_STATE, (data) => setUpdate(data as AppUpdateState))
   }, [])
 
   useEffect(() => {
@@ -57,17 +70,48 @@ export default function Updater(): React.JSX.Element {
   }, [doneCount])
 
   const doCheck = async (): Promise<void> => {
-    setChecking(true)
+    setUpdateBusy(true)
     try {
-      const r = await invoke<UpdaterCheckResult>('mod:updater:check')
-      setCheck(r)
-      if (r.configured && !r.hasUpdate) {
+      const state = await invoke<AppUpdateState>('mod:updater:check')
+      setUpdate(state)
+      if (state.phase === 'up-to-date') {
         pushToast('success', t('Bạn đang dùng phiên bản mới nhất', 'You are on the latest version'))
       }
     } catch {
       /* invoke đã hiện toast lỗi */
     } finally {
-      setChecking(false)
+      setUpdateBusy(false)
+    }
+  }
+
+  const downloadUpdate = async (): Promise<void> => {
+    setUpdateBusy(true)
+    try {
+      setUpdate(await invoke<AppUpdateState>('mod:updater:download'))
+    } catch {
+      /* invoke đã hiện toast lỗi */
+    } finally {
+      setUpdateBusy(false)
+    }
+  }
+
+  const installUpdate = async (): Promise<void> => {
+    if (
+      activeTaskCount > 0 &&
+      !window.confirm(
+        t(
+          `Đang có ${activeTaskCount} tác vụ chạy/chờ. Cài bản mới sẽ đóng ứng dụng và dừng các tác vụ này. Tiếp tục?`,
+          `${activeTaskCount} task(s) are running/queued. Installing will close the app and stop them. Continue?`
+        )
+      )
+    ) {
+      return
+    }
+    setUpdateBusy(true)
+    try {
+      await invoke<boolean>('mod:updater:install')
+    } finally {
+      setUpdateBusy(false)
     }
   }
 
@@ -101,25 +145,39 @@ export default function Updater(): React.JSX.Element {
     { name: 'yt-dlp', path: bins?.ytdlp ?? null, version: bins?.versions.ytdlp ?? '' }
   ]
   const missingBins = !!bins && (!bins.ffmpeg || !bins.ffprobe || !bins.ytdlp)
+  const appVersion = update?.current || version
+  const updatePhase = update?.phase ?? 'disabled'
+  const updateProgress = update?.progress
 
   return (
     <div>
       <div className="page-title">{t('Kiểm tra cập nhật', 'Check Updates')}</div>
       <div className="page-desc">
         {t(
-          'Kiểm tra phiên bản ứng dụng mới, cập nhật yt-dlp và quản lý binaries FFmpeg / yt-dlp.',
-          'Check for new app versions, update yt-dlp and manage FFmpeg / yt-dlp binaries.'
+          'Tự kiểm tra, tải và cài phiên bản ứng dụng mới; đồng thời cập nhật yt-dlp và quản lý binaries.',
+          'Automatically check, download and install app updates; also update yt-dlp and manage binaries.'
         )}
       </div>
 
       <div className="card">
         <div className="card-title">
           {t('Phiên bản ứng dụng', 'App version')}
-          {version && <span className="badge">v{version}</span>}
+          {appVersion && <span className="badge">v{appVersion}</span>}
         </div>
         <div className="row wrap">
-          <button className="btn btn-primary" disabled={checking} onClick={() => void doCheck()}>
-            {checking ? <span className="spin">⏳</span> : '🔄'} {t('Kiểm tra cập nhật', 'Check for updates')}
+          <button
+            className="btn btn-primary"
+            disabled={
+              updateBusy ||
+              !update?.configured ||
+              !update.supported ||
+              updatePhase === 'checking' ||
+              updatePhase === 'downloading'
+            }
+            onClick={() => void doCheck()}
+          >
+            {updatePhase === 'checking' ? <span className="spin" /> : '🔄'}{' '}
+            {t('Kiểm tra cập nhật', 'Check for updates')}
           </button>
           <span className="hint ellipsis" title={updateUrl}>
             {updateUrl
@@ -128,62 +186,124 @@ export default function Updater(): React.JSX.Element {
           </span>
         </div>
 
-        {check && !check.configured && (
+        {update && !update.configured && (
           <div className="hint mt">
             ⚠️{' '}
             {t(
-              'Chưa cấu hình URL cập nhật trong Cài đặt (định dạng GitHub Releases API, vd https://api.github.com/repos/<owner>/<repo>/releases/latest).',
-              'Update URL is not configured in Settings (GitHub Releases API format, e.g. https://api.github.com/repos/<owner>/<repo>/releases/latest).'
+              'Chưa cấu hình URL cập nhật. Có thể dùng URL GitHub repository/releases hoặc thư mục HTTPS chứa latest.yml.',
+              'Update URL is not configured. Use a GitHub repository/releases URL or an HTTPS folder containing latest.yml.'
             )}
           </div>
         )}
 
-        {check?.configured &&
-          (check.hasUpdate ? (
-            <div className="mt">
-              <div className="row wrap">
-                <span className="text-success">
-                  🆕 {t('Có bản mới', 'New version available')}: <b>v{check.latest}</b>
+        {update?.configured && !update.supported && (
+          <div className="hint mt">
+            ℹ️{' '}
+            {t(
+              'Tự cập nhật chỉ hoạt động trong bản Windows đã đóng gói và cài đặt; chế độ development không tải installer.',
+              'Auto-update works only in an installed packaged Windows build; development mode does not download installers.'
+            )}
+          </div>
+        )}
+
+        {updatePhase === 'checking' && (
+          <div className="row mt text-dim">
+            <span className="spin" /> {t('Đang kiểm tra máy chủ cập nhật...', 'Checking the update server...')}
+          </div>
+        )}
+
+        {updatePhase === 'available' && (
+          <div className="row mt wrap">
+            <span className="text-success">
+              🆕 {t('Có bản mới', 'New version available')}: <b>v{update?.latest}</b>
+            </span>
+            <span className="hint">{t('Đang chuẩn bị tải tự động...', 'Preparing automatic download...')}</span>
+            <button className="btn btn-sm" disabled={updateBusy} onClick={() => void downloadUpdate()}>
+              ⬇️ {t('Tải ngay', 'Download now')}
+            </button>
+          </div>
+        )}
+
+        {updatePhase === 'downloading' && (
+          <div className="mt">
+            <div className="row wrap mb">
+              <span className="text-success">
+                ⬇️ {t('Đang tải bản', 'Downloading version')} <b>v{update?.latest}</b>
+              </span>
+              {updateProgress && (
+                <span className="hint mono">
+                  {fmtBytes(updateProgress.transferred)} / {fmtBytes(updateProgress.total)} ·{' '}
+                  {fmtBytes(updateProgress.bytesPerSecond)}/s
                 </span>
-                <span className="text-dim" style={{ fontSize: 12 }}>
-                  ({t('hiện tại', 'current')}: v{check.current})
-                </span>
-                {check.url && (
-                  <button className="btn btn-success btn-sm" onClick={() => void openExternal(check.url!)}>
-                    ⬇️ {t('Tải bản mới', 'Download update')}
-                  </button>
-                )}
-              </div>
-              {check.changelog && (
-                <div className="mt">
-                  <div className="text-dim" style={{ fontSize: 12, marginBottom: 4 }}>
-                    {t('Nhật ký thay đổi', 'Changelog')}:
-                  </div>
-                  <pre
-                    className="mono"
-                    style={{
-                      maxHeight: 240,
-                      overflow: 'auto',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      margin: 0,
-                      padding: 10,
-                      fontSize: 12,
-                      background: 'var(--accent-soft)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius-sm)'
-                    }}
-                  >
-                    {check.changelog}
-                  </pre>
-                </div>
               )}
             </div>
-          ) : (
-            <div className="text-success mt">
-              ✅ {t('Bạn đang dùng phiên bản mới nhất', 'You are on the latest version')} (v{check.current})
+            <ProgressBar value={updateProgress?.percent ?? -1} />
+          </div>
+        )}
+
+        {updatePhase === 'downloaded' && (
+          <div className="row mt wrap">
+            <span className="text-success">
+              ✅ {t('Đã tải xong bản', 'Downloaded version')} <b>v{update?.latest}</b>
+            </span>
+            <button
+              className="btn btn-success"
+              disabled={updateBusy}
+              onClick={() => void installUpdate()}
+            >
+              🔄 {t('Cài đặt & khởi động lại', 'Install & restart')}
+            </button>
+            <span className="hint">
+              {t('Nếu đóng ứng dụng, bản mới cũng sẽ tự cài.', 'The update will also install automatically when the app exits.')}
+            </span>
+          </div>
+        )}
+
+        {updatePhase === 'up-to-date' && (
+          <div className="text-success mt">
+            ✅ {t('Bạn đang dùng phiên bản mới nhất', 'You are on the latest version')} (v{appVersion})
+          </div>
+        )}
+
+        {updatePhase === 'error' && (
+          <div className="mt">
+            <span className="text-danger">❌ {update?.error}</span>
+            {update?.latest && (
+              <button
+                className="btn btn-sm mt"
+                disabled={updateBusy}
+                onClick={() => void downloadUpdate()}
+              >
+                {t('Thử tải lại', 'Retry download')}
+              </button>
+            )}
+          </div>
+        )}
+
+        {update?.changelog && updatePhase !== 'up-to-date' && (
+          <div className="mt">
+            <div className="text-dim" style={{ fontSize: 12, marginBottom: 4 }}>
+              {t('Nhật ký thay đổi', 'Changelog')}:
             </div>
-          ))}
+            <pre
+              className="mono"
+              style={{
+                maxHeight: 240,
+                overflow: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                margin: 0,
+                padding: 10,
+                fontSize: 12,
+                background: 'var(--accent-soft)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)'
+              }}
+            >
+              {update.changelog}
+            </pre>
+          </div>
+        )}
       </div>
 
       <div className="card">

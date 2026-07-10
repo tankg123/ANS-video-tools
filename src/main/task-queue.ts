@@ -31,7 +31,7 @@ const FLUSH_MS = 250 // throttle cập nhật UI tối đa 4 lần/giây (spec 5
 
 /**
  * Hàng đợi tác vụ trung tâm (spec mục 2):
- * - pool riêng: ffmpeg (render/cut/...), download (yt-dlp), live (stream), misc
+ * - pool riêng: ffmpeg (render/cut/...), download (yt-dlp), misc
  * - giới hạn song song từng pool, pump tự động
  * - broadcast thay đổi về renderer theo lô, throttle 4Hz
  */
@@ -41,7 +41,6 @@ export class TaskQueue {
   private limits: Record<string, number> = {
     ffmpeg: Math.max(1, Math.floor(os.cpus().length / 2)),
     download: 2,
-    live: 5,
     misc: 2
   }
   private running: Record<string, number> = {}
@@ -54,11 +53,10 @@ export class TaskQueue {
   }
 
   /** giới hạn hiệu dụng pool ffmpeg = min(cấu hình user, số nhân CPU / 2) — spec 5.3 */
-  applySettingsLimits(maxFfmpeg: number, maxDownloads: number, maxLive: number): void {
+  applySettingsLimits(maxFfmpeg: number, maxDownloads: number): void {
     const cpuCap = Math.max(1, Math.floor(os.cpus().length / 2))
     this.setLimit('ffmpeg', Math.min(Math.max(1, maxFfmpeg), cpuCap))
     this.setLimit('download', Math.min(Math.max(1, maxDownloads), 10))
-    this.setLimit('live', Math.max(1, maxLive))
   }
 
   add(opts: AddTaskOptions): string {
