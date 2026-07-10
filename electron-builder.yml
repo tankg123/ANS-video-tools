@@ -2,12 +2,12 @@ appId: com.ansstudio.ansvideotools
 productName: ANS Video Tools
 directories:
   output: release
-artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+artifactName: ANS-Video-Tools-Setup-${version}-${arch}.${ext}
 publish:
-  - provider: generic
-    # Runtime settings.updateUrl overrides this placeholder.
-    # Keeping a provider here makes electron-builder generate latest.yml + blockmap.
-    url: https://updates.invalid/ans-video-tools
+  - provider: github
+    owner: tankg123
+    repo: ANS-video-tools
+    releaseType: release
 files:
   - out/**
   - resources/**

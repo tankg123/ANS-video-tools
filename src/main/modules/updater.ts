@@ -2,51 +2,15 @@ import { app } from 'electron'
 import { NsisUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import type { ModuleContext } from '../module-context'
 import type { AppUpdateState } from '@shared/modules/updater'
-import { EV_APP_UPDATE_STATE } from '@shared/modules/updater'
+import {
+  APP_UPDATE_OWNER,
+  APP_UPDATE_REPO,
+  APP_UPDATE_SOURCE,
+  EV_APP_UPDATE_STATE
+} from '@shared/modules/updater'
 
 const AUTO_CHECK_DELAY_MS = 10_000
 const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
-
-interface GithubRepo {
-  owner: string
-  repo: string
-}
-
-function githubRepoFromUrl(raw: string): GithubRepo | null {
-  try {
-    const url = new URL(raw)
-    const parts = url.pathname.split('/').filter(Boolean)
-    if (url.hostname.toLowerCase() === 'api.github.com' && parts[0] === 'repos') {
-      const owner = parts[1]
-      const repo = parts[2]?.replace(/\.git$/i, '')
-      return owner && repo ? { owner, repo } : null
-    }
-    if (url.hostname.toLowerCase() === 'github.com') {
-      const owner = parts[0]
-      const repo = parts[1]?.replace(/\.git$/i, '')
-      return owner && repo ? { owner, repo } : null
-    }
-  } catch {
-    return null
-  }
-  return null
-}
-
-function genericFeedUrl(raw: string): string {
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    throw new Error('URL cập nhật không hợp lệ')
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('URL cập nhật phải bắt đầu bằng http:// hoặc https://')
-  }
-  url.search = ''
-  url.hash = ''
-  url.pathname = url.pathname.replace(/\/latest(?:-[^/]+)?\.ya?ml$/i, '/')
-  return url.toString().replace(/\/$/, '')
-}
 
 function releaseNotes(info: UpdateInfo): string {
   if (typeof info.releaseNotes === 'string') return info.releaseNotes
@@ -65,33 +29,31 @@ function messageOf(error: unknown): string {
 /**
  * App updater:
  * - Windows NSIS packaged build only.
- * - Accepts a GitHub repository/releases URL or a generic feed containing latest.yml.
+ * - Update source is locked to the official public GitHub repository.
  * - Checks automatically after startup and every six hours.
  * - Downloads automatically; installs on normal app exit or via quitAndInstall.
  */
 export default function register(ctx: ModuleContext): void {
   const current = app.getVersion()
   const isSupported = app.isPackaged && process.platform === 'win32'
-  const configuredUrl = (): string => (ctx.settings.all().updateUrl ?? '').trim()
 
   let state: AppUpdateState = {
-    configured: configuredUrl() !== '',
     supported: isSupported,
-    phase: isSupported && configuredUrl() ? 'idle' : 'disabled',
+    source: APP_UPDATE_SOURCE,
+    phase: isSupported ? 'idle' : 'disabled',
     current
   }
   let updater: NsisUpdater | null = null
-  let updaterUrl = ''
 
   const snapshot = (): AppUpdateState => ({
     ...state,
-    configured: configuredUrl() !== '',
     supported: isSupported,
+    source: APP_UPDATE_SOURCE,
     progress: state.progress ? { ...state.progress } : undefined
   })
 
   const patchState = (patch: Partial<AppUpdateState>): void => {
-    state = { ...state, ...patch, configured: configuredUrl() !== '', supported: isSupported }
+    state = { ...state, ...patch, supported: isSupported, source: APP_UPDATE_SOURCE }
     ctx.send(EV_APP_UPDATE_STATE, snapshot())
   }
 
@@ -160,26 +122,22 @@ export default function register(ctx: ModuleContext): void {
     if (!isSupported) {
       throw new Error('Tự cập nhật chỉ hoạt động trong bản Windows đã được đóng gói và cài đặt')
     }
-    const raw = configuredUrl()
-    if (!raw) throw new Error('Chưa cấu hình URL cập nhật trong Cài đặt')
-    if (updater && updaterUrl === raw) return updater
+    if (updater) return updater
 
-    const github = githubRepoFromUrl(raw)
-    const instance = github
-      ? new NsisUpdater({ provider: 'github', owner: github.owner, repo: github.repo })
-      : new NsisUpdater({ provider: 'generic', url: genericFeedUrl(raw) })
-    instance.fullChangelog = !!github
+    const instance = new NsisUpdater({
+      provider: 'github',
+      owner: APP_UPDATE_OWNER,
+      repo: APP_UPDATE_REPO
+    })
+    instance.fullChangelog = true
     wireUpdater(instance)
     updater = instance
-    updaterUrl = raw
     return instance
   }
 
   const checkForUpdates = async (background = false): Promise<AppUpdateState> => {
-    if (!configuredUrl() || !isSupported) {
+    if (!isSupported) {
       patchState({ phase: 'disabled', error: undefined, progress: undefined })
-      if (background) return snapshot()
-      if (!configuredUrl()) throw new Error('Chưa cấu hình URL cập nhật trong Cài đặt')
       return snapshot()
     }
 

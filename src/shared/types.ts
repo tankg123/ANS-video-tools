@@ -90,7 +90,6 @@ export interface AppSettings {
   maxDownloads: number
   encoderPref: 'auto' | 'nvenc' | 'qsv' | 'amf' | 'x264'
   autoStart: boolean
-  updateUrl: string
   hw?: HwInfo
 }
 

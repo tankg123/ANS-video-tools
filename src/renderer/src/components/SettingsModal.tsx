@@ -41,8 +41,7 @@ export function SettingsModal(): React.JSX.Element | null {
       maxFfmpeg: draft.maxFfmpeg,
       maxDownloads: draft.maxDownloads,
       encoderPref: draft.encoderPref,
-      autoStart: draft.autoStart,
-      updateUrl: draft.updateUrl
+      autoStart: draft.autoStart
     })
     if (licUser !== settings?.license.username || licKey !== settings?.license.key) {
       await invoke('core:license:set', { username: licUser, key: licKey })
@@ -110,20 +109,6 @@ export function SettingsModal(): React.JSX.Element | null {
                 { value: 'amf', label: 'AMD AMF' },
                 { value: 'x264', label: 'CPU (libx264)' }
               ]}
-            />
-          </Field>
-          <Field
-            label={t('Nguồn tự cập nhật', 'Auto-update source')}
-            hint={t(
-              'URL GitHub repository/releases hoặc thư mục HTTPS chứa latest.yml',
-              'GitHub repository/releases URL or an HTTPS folder containing latest.yml'
-            )}
-          >
-            <input
-              className="input"
-              placeholder="https://github.com/owner/repo/releases"
-              value={draft.updateUrl}
-              onChange={(e) => setDraft({ ...draft, updateUrl: e.target.value })}
             />
           </Field>
           <div className="card" style={{ padding: 10 }}>

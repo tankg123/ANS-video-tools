@@ -18,8 +18,7 @@ function defaults(): AppSettings {
     maxFfmpeg: Math.max(1, Math.floor(os.cpus().length / 2)),
     maxDownloads: 2,
     encoderPref: 'auto',
-    autoStart: false,
-    updateUrl: ''
+    autoStart: false
   }
 }
 
@@ -73,9 +72,11 @@ export class SettingsStore {
     try {
       if (fs.existsSync(FILE)) {
         const saved = JSON.parse(fs.readFileSync(FILE, 'utf8')) as Record<string, unknown>
-        if ('maxLive' in saved) {
-          delete saved.maxLive
-          settingsMigrated = true
+        for (const legacyKey of ['maxLive', 'updateUrl']) {
+          if (legacyKey in saved) {
+            delete saved[legacyKey]
+            settingsMigrated = true
+          }
         }
         this.data = deepMerge(defaults(), saved)
       }

@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { MediaInfo } from '@shared/types'
 import type { LoopMode, LoopStartPayload } from '@shared/modules/loop'
 import { fmtBytes, secToHms } from '@shared/time'
-import { invoke, pickFiles, probe } from '../../api'
-import { Field, NumInput } from '../../components/Field'
+import { invoke, kvGet, kvSet, pickFiles, probe } from '../../api'
+import { Field, FolderInput, NumInput } from '../../components/Field'
 import { FileDrop } from '../../components/FileDrop'
 import { TaskTable } from '../../components/TaskTable'
 import { useT } from '../../i18n'
@@ -18,9 +18,10 @@ import { useUi } from '../../store/ui'
 export default function Loop(): React.JSX.Element {
   const t = useT()
   const pushToast = useUi((s) => s.pushToast)
-  const outputDir = useSettings((s) => s.settings?.outputDir ?? '')
+  const defaultOutputDir = useSettings((s) => s.settings?.outputDir ?? '')
 
   const [input, setInput] = useState<string>('')
+  const [outputDir, setOutputDir] = useState(defaultOutputDir)
   const [info, setInfo] = useState<MediaInfo | null>(null)
   const [mode, setMode] = useState<LoopMode>('duration')
   const [hours, setHours] = useState(1)
@@ -28,6 +29,21 @@ export default function Loop(): React.JSX.Element {
   const [seconds, setSeconds] = useState(0)
   const [count, setCount] = useState(2)
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    void kvGet<string>('loop', 'outputDir', defaultOutputDir).then((saved) => {
+      if (alive) setOutputDir(saved)
+    })
+    return () => {
+      alive = false
+    }
+  }, [defaultOutputDir])
+
+  const changeOutputDir = (value: string): void => {
+    setOutputDir(value)
+    void kvSet('loop', 'outputDir', value)
+  }
 
   const pick = async (paths: string[]): Promise<void> => {
     const p = paths[0]
@@ -149,6 +165,20 @@ export default function Loop(): React.JSX.Element {
             </Field>
           </div>
         )}
+
+        <Field
+          label={t('Thư mục xuất', 'Output folder')}
+          hint={t(
+            'Để trống sẽ lưu cạnh video nguồn. Lựa chọn này được ghi nhớ cho lần mở sau.',
+            'Leave empty to save next to the source video. This choice is remembered next time.'
+          )}
+        >
+          <FolderInput
+            value={outputDir}
+            onChange={changeOutputDir}
+            placeholder={t('Cùng thư mục với video nguồn', 'Next to the source video')}
+          />
+        </Field>
 
         <div className="row mt">
           <button className="btn btn-primary" disabled={!valid || busy} onClick={() => void run()}>

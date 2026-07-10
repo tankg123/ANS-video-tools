@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
 import type { LoopStartPayload } from '@shared/modules/loop'
@@ -15,7 +16,16 @@ export default function register(ctx: ModuleContext): void {
     const d = info.durationSec
     if (!(d > 0)) throw new Error('Không đọc được thời lượng video nguồn')
 
-    const output = ctx.deriveOutput(p.input, '_loop', p.outputDir)
+    const outputDir = p.outputDir?.trim() || undefined
+    if (outputDir) {
+      try {
+        if (!fs.statSync(outputDir).isDirectory()) throw new Error()
+      } catch {
+        throw new Error('Thư mục xuất không tồn tại hoặc không truy cập được')
+      }
+    }
+
+    const output = ctx.deriveOutput(p.input, '_loop', outputDir)
     let args: string[]
     let durationSec: number
 

@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { AppUpdateState } from '@shared/modules/updater'
-import { EV_APP_UPDATE_STATE } from '@shared/modules/updater'
+import { APP_UPDATE_SOURCE, EV_APP_UPDATE_STATE } from '@shared/modules/updater'
 import { fmtBytes } from '@shared/time'
 import { appInfo, binsStatus, fetchBins, invoke, invokeSilent, on } from '../../api'
 import { ProgressBar } from '../../components/ProgressBar'
 import { TaskTable } from '../../components/TaskTable'
 import { useT } from '../../i18n'
-import { useSettings } from '../../store/settings'
 import { useTasks } from '../../store/tasks'
 import { useUi } from '../../store/ui'
 
@@ -20,13 +19,12 @@ function shortVer(s: string | null | undefined): string {
 
 /**
  * Module Kiểm tra cập nhật (spec 4.11):
- * - tự kiểm tra/tải/cài bản app mới qua GitHub Releases hoặc generic latest.yml feed
+ * - tự kiểm tra/tải/cài bản app mới từ GitHub Releases cố định của ANS Video Tools
  * - trạng thái binaries (ffmpeg/ffprobe/yt-dlp) + Cập nhật yt-dlp + Tải FFmpeg + yt-dlp
  */
 export default function Updater(): React.JSX.Element {
   const t = useT()
   const pushToast = useUi((s) => s.pushToast)
-  const updateUrl = useSettings((s) => s.settings?.updateUrl ?? '')
 
   const [version, setVersion] = useState('')
   const [update, setUpdate] = useState<AppUpdateState | null>(null)
@@ -146,6 +144,7 @@ export default function Updater(): React.JSX.Element {
   ]
   const missingBins = !!bins && (!bins.ffmpeg || !bins.ffprobe || !bins.ytdlp)
   const appVersion = update?.current || version
+  const updateSource = update?.source || APP_UPDATE_SOURCE
   const updatePhase = update?.phase ?? 'disabled'
   const updateProgress = update?.progress
 
@@ -169,8 +168,7 @@ export default function Updater(): React.JSX.Element {
             className="btn btn-primary"
             disabled={
               updateBusy ||
-              !update?.configured ||
-              !update.supported ||
+              !update?.supported ||
               updatePhase === 'checking' ||
               updatePhase === 'downloading'
             }
@@ -179,24 +177,12 @@ export default function Updater(): React.JSX.Element {
             {updatePhase === 'checking' ? <span className="spin" /> : '🔄'}{' '}
             {t('Kiểm tra cập nhật', 'Check for updates')}
           </button>
-          <span className="hint ellipsis" title={updateUrl}>
-            {updateUrl
-              ? `${t('Nguồn', 'Source')}: ${updateUrl}`
-              : t('Chưa cấu hình URL cập nhật — vào Cài đặt để thêm', 'Update URL not configured — add it in Settings')}
+          <span className="hint ellipsis" title={updateSource}>
+            🔒 {t('Nguồn cố định', 'Locked source')}: {updateSource}
           </span>
         </div>
 
-        {update && !update.configured && (
-          <div className="hint mt">
-            ⚠️{' '}
-            {t(
-              'Chưa cấu hình URL cập nhật. Có thể dùng URL GitHub repository/releases hoặc thư mục HTTPS chứa latest.yml.',
-              'Update URL is not configured. Use a GitHub repository/releases URL or an HTTPS folder containing latest.yml.'
-            )}
-          </div>
-        )}
-
-        {update?.configured && !update.supported && (
+        {update && !update.supported && (
           <div className="hint mt">
             ℹ️{' '}
             {t(

@@ -136,7 +136,7 @@
 - Danh sách được lưu (persist) — mở lại app vẫn còn.
 
 ### 4.11. Kiểm tra cập nhật
-- Tự kiểm tra GitHub Releases hoặc generic `latest.yml` feed sau khi khởi động và định kỳ mỗi 6 giờ.
+- Tự kiểm tra GitHub Releases cố định `tankg123/ANS-video-tools` sau khi khởi động và định kỳ mỗi 6 giờ; người dùng không thể đổi nguồn cập nhật trong ứng dụng.
 - Khi có bản mới: tự tải installer, hiển thị tiến trình, cho phép cài đặt + khởi động lại; nếu đóng app sau khi tải xong thì tự cài.
 - Kèm nút "Cập nhật yt-dlp" (`yt-dlp -U`) vì các site đổi API liên tục.
 

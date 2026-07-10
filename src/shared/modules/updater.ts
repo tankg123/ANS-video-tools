@@ -18,11 +18,16 @@ export interface AppUpdateProgress {
   bytesPerSecond: number
 }
 
+export const APP_UPDATE_OWNER = 'tankg123'
+export const APP_UPDATE_REPO = 'ANS-video-tools'
+export const APP_UPDATE_SOURCE = `https://github.com/${APP_UPDATE_OWNER}/${APP_UPDATE_REPO}/releases`
+
 /** Snapshot trạng thái auto-update, dùng cho IPC và event main → renderer. */
 export interface AppUpdateState {
-  configured: boolean
   /** Auto-update chỉ hoạt động trong bản Windows đã đóng gói/cài đặt. */
   supported: boolean
+  /** Nguồn cố định trong mã, người dùng không thể thay đổi trong ứng dụng. */
+  source: string
   phase: AppUpdatePhase
   current: string
   latest?: string
