@@ -176,6 +176,10 @@ export default function register(ctx: ModuleContext): void {
 
   // Cập nhật yt-dlp ('yt-dlp -U') — site đổi API liên tục.
   ctx.handle('mod:updater:ytdlp', async () => {
+    const existing = ctx.queue
+      .list()
+      .find((task) => task.type === 'ytdlp-update' && (task.status === 'queued' || task.status === 'running'))
+    if (existing) return existing.id
     const bin = ctx.resolveBin('yt-dlp')
     if (!bin) throw new Error('Không tìm thấy yt-dlp — hãy bấm "Tải FFmpeg + yt-dlp" trước')
     return ctx.queue.add({

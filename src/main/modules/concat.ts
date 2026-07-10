@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
-import { encoderQualityArgs } from '../util'
+import { encoderQualityArgs, releaseOutput } from '../util'
 import type {
   ConcatAnalyzePayload,
   ConcatAnalyzeResult,
@@ -40,8 +40,12 @@ async function analyze(ctx: ModuleContext, inputs: string[]): Promise<ConcatAnal
   )
 
   const first = infos[0]
+  const firstExt = path.extname(first.path).toLowerCase()
   const reasons = new Set<string>()
   for (const i of infos.slice(1)) {
+    if (path.extname(i.path).toLowerCase() !== firstExt) {
+      reasons.add('Container/đuôi file khác nhau')
+    }
     if (i.vcodec !== first.vcodec) {
       reasons.add(`Codec video khác nhau (${first.vcodec} ≠ ${i.vcodec})`)
     }
@@ -95,17 +99,23 @@ export default function register(ctx: ModuleContext): void {
         )
       }
       // giữ đuôi file gốc nếu tất cả cùng đuôi (an toàn container khi copy), khác nhau → .mp4
-      const exts = new Set(p.inputs.map((f) => path.extname(f).toLowerCase()))
-      const ext = exts.size === 1 && path.extname(firstInput) ? path.extname(firstInput) : '.mp4'
+      const ext = path.extname(firstInput) || '.mkv'
       const output = ctx.deriveOutput(firstInput, '_merged', p.outputDir, ext)
       const lines = p.inputs.map((f) => `file '${ctx.concatEscape(f)}'`).join('\n') + '\n'
-      const listFile = ctx.writeTempFile(firstInput, `concat_${Date.now()}.txt`, lines)
+      let listFile: string
+      try {
+        listFile = ctx.writeTempFile(firstInput, `concat_${Date.now()}.txt`, lines)
+      } catch (error) {
+        releaseOutput(output)
+        throw error
+      }
       return ctx.enqueueFfmpeg({
         type: 'concat',
         title: `Ghép ${p.inputs.length} video (copy)`,
         args: ['-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', output],
         durationSec: a.totalDur,
         outputPath: output,
+        cleanupPaths: [listFile],
         meta: { mode: 'copy', count: p.inputs.length }
       })
     }
@@ -126,11 +136,11 @@ export default function register(ctx: ModuleContext): void {
     const pads: string[] = []
     for (let i = 0; i < n; i++) {
       parts.push(
-        `[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
+        `[${i}:v]setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
           `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${F},format=yuv420p[v${i}]`
       )
       // aformat để đồng nhất sample format + channel layout (bắt buộc với filter concat)
-      parts.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`)
+      parts.push(`[${i}:a]asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`)
       pads.push(`[v${i}][a${i}]`)
     }
     parts.push(`${pads.join('')}concat=n=${n}:v=1:a=1[vout][aout]`)

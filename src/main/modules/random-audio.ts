@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
 import type { FfmpegTaskOptions } from '../ffmpeg'
+import { releaseOutput } from '../util'
 import type {
   RandomAudioFormat,
   RandomAudioScanPayload,
@@ -115,17 +116,24 @@ async function buildSpec(
     const ext = path.extname(first)
     const output = ctx.deriveOutput(first, suffix, outputDir, ext)
     const lines = inputs.map((f) => `file '${ctx.concatEscape(f)}'`).join('\n') + '\n'
-    const listFile = ctx.writeTempFile(
-      first,
-      `rndaudio_${Date.now()}_${variantIdx}_${Math.random().toString(36).slice(2, 7)}.txt`,
-      lines
-    )
+    let listFile: string
+    try {
+      listFile = ctx.writeTempFile(
+        first,
+        `rndaudio_${Date.now()}_${variantIdx}_${Math.random().toString(36).slice(2, 7)}.txt`,
+        lines
+      )
+    } catch (error) {
+      releaseOutput(output)
+      throw error
+    }
     return {
       type: 'random-audio',
       title: `Ghép âm thanh ngẫu nhiên ${inputs.length} file (copy)${tag}`,
-      args: ['-f', 'concat', '-safe', '0', '-i', listFile, '-map', '0:a', '-c', 'copy', output],
+      args: ['-f', 'concat', '-safe', '0', '-i', listFile, '-map', '0:a:0', '-c', 'copy', output],
       durationSec: totalDur,
       outputPath: output,
+      cleanupPaths: [listFile],
       meta: { mode: 'copy', count: inputs.length, variant: variantIdx }
     }
   }
@@ -136,7 +144,7 @@ async function buildSpec(
   const labels: string[] = []
   for (let i = 0; i < n; i++) {
     parts.push(
-      `[${i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a${i}]`
+      `[${i}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a${i}]`
     )
     labels.push(`[a${i}]`)
   }
@@ -173,7 +181,7 @@ async function buildSpec(
  */
 export default function register(ctx: ModuleContext): void {
   ctx.handle('mod:random-audio:start', async (p: RandomAudioStartPayload) => {
-    const jobs = Array.isArray(p.jobs) ? p.jobs : []
+    const jobs = Array.isArray(p?.jobs) ? p.jobs : []
     if (!jobs.length) throw new Error('Chưa có bản ghép nào — hãy "Trộn ngẫu nhiên" trước')
     const format: RandomAudioFormat = p.format === 'wav' ? 'wav' : 'mp3'
     const outputDir = p.outputDir?.trim() || undefined
@@ -186,11 +194,23 @@ export default function register(ctx: ModuleContext): void {
     }
     // Hai pha: probe + validate + dựng spec cho TẤT CẢ bản trước; nếu một bản lỗi (vd thiếu
     // audio) thì reject trước khi enqueue bất kỳ task nào (all-or-nothing).
-    const specs = await Promise.all(
+    const built = await Promise.allSettled(
       jobs.map((inputs, i) =>
         buildSpec(ctx, inputs, !!p.forceReencode, format, outputDir, jobs.length > 1 ? i + 1 : 0)
       )
     )
+    const failed = built.find((result) => result.status === 'rejected')
+    if (failed) {
+      for (const result of built) {
+        if (result.status !== 'fulfilled') continue
+        releaseOutput(result.value.outputPath)
+        for (const filePath of result.value.cleanupPaths ?? []) {
+          try { fs.rmSync(filePath, { force: true }) } catch { /* ignore */ }
+        }
+      }
+      throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason))
+    }
+    const specs = built.map((result) => (result as PromiseFulfilledResult<FfmpegTaskOptions>).value)
     return specs.map((s) => ctx.enqueueFfmpeg(s))
   })
 

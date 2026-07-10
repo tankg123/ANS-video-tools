@@ -33,6 +33,7 @@ function execFileP(cmd: string, args: string[]): Promise<string> {
 export class ProcessManager {
   /** pid → tag ('download', 'ffmpeg', 'misc'...) */
   private pids = new Map<number, string>()
+  private persistTimer: ReturnType<typeof setTimeout> | null = null
 
   spawnManaged(bin: string, args: string[], opts: SpawnOptions = {}): { child: ChildProcess } {
     const child = spawn(bin, args, {
@@ -102,8 +103,27 @@ export class ProcessManager {
     return killed
   }
 
-  trackedCount(): number {
-    return this.pids.size
+  trackedCount(excludeTags?: Set<string>): number {
+    if (!excludeTags?.size) return this.pids.size
+    let count = 0
+    for (const tag of this.pids.values()) {
+      if (!excludeTags.has(tag)) count++
+    }
+    return count
+  }
+
+  flushNow(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = null
+    }
+    try {
+      const tempFile = `${PID_FILE}.${process.pid}.tmp`
+      fs.writeFileSync(tempFile, JSON.stringify([...this.pids.keys()]), 'utf8')
+      fs.renameSync(tempFile, PID_FILE)
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -132,12 +152,8 @@ export class ProcessManager {
   }
 
   private persistPids(): void {
-    try {
-      // vẫn ghi mảng số [pid,...] như cũ — orphanCleanup không đổi định dạng
-      fs.writeFileSync(PID_FILE, JSON.stringify([...this.pids.keys()]), 'utf8')
-    } catch {
-      /* ignore */
-    }
+    if (this.persistTimer) clearTimeout(this.persistTimer)
+    this.persistTimer = setTimeout(() => this.flushNow(), 150)
   }
 }
 

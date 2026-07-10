@@ -42,7 +42,18 @@ export default function register(ctx: ModuleContext): void {
   ctx.handle('mod:render:start', async (p: RenderStartPayload): Promise<RenderStartResult> => {
     const inputs = (p?.inputs ?? []).filter(Boolean)
     if (!inputs.length) throw new Error('Chưa có file nào trong danh sách render')
-    const o = p.options
+    const o = p?.options
+    if (!o) throw new Error('Thiếu thiết lập render')
+    if (!new Set(['h264', 'hevc']).has(o.codec)) throw new Error('Codec render không hợp lệ')
+    if (!new Set(['crf', 'bitrate']).has(o.qualityMode)) throw new Error('Chế độ chất lượng không hợp lệ')
+    if (!new Set(['keep', 2160, 1440, 1080, 720, 480]).has(o.resolution)) {
+      throw new Error('Độ phân giải đầu ra không hợp lệ')
+    }
+    if (!new Set(['keep', 24, 30, 60]).has(o.fps)) throw new Error('FPS đầu ra không hợp lệ')
+    if (!new Set(['copy', 'aac192']).has(o.audio)) throw new Error('Thiết lập audio không hợp lệ')
+    if (!Number.isFinite(o.crf) || !Number.isFinite(o.bitrateMbps)) {
+      throw new Error('Thông số chất lượng không hợp lệ')
+    }
     const codec = o.codec === 'hevc' ? 'hevc' : 'h264'
     const enc = await ctx.pickEncoder(codec)
     const isNvenc = enc.includes('nvenc')

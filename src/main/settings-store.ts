@@ -5,6 +5,7 @@ import path from 'node:path'
 import { userDataDir } from './env'
 import type { AppSettings } from '@shared/types'
 import { EV_SETTINGS } from '@shared/types'
+import { DEFAULT_ACCENT_COLOR, normalizeAccentColor } from '@shared/theme'
 
 const FILE = path.join(userDataDir, 'settings.json')
 const KV_FILE = path.join(userDataDir, 'kv.json')
@@ -12,6 +13,7 @@ const KV_FILE = path.join(userDataDir, 'kv.json')
 function defaults(): AppSettings {
   return {
     language: 'vi',
+    accentColor: DEFAULT_ACCENT_COLOR,
     license: { username: 'User', key: '', expiry: null },
     outputDir: '',
     downloadDir: path.join(os.homedir(), 'Downloads'),
@@ -35,6 +37,33 @@ function deepMerge<T>(base: T, patch: unknown): T {
   return out as T
 }
 
+const ENCODERS = new Set<AppSettings['encoderPref']>(['auto', 'nvenc', 'qsv', 'amf', 'x264'])
+
+function normalizeSettings(value: unknown): AppSettings {
+  const base = defaults()
+  const merged = deepMerge(base, value)
+  const license = isPlainObject(merged.license) ? merged.license : base.license
+  return {
+    ...merged,
+    language: merged.language === 'en' ? 'en' : 'vi',
+    accentColor: normalizeAccentColor(merged.accentColor),
+    license: {
+      username: typeof license.username === 'string' ? license.username.slice(0, 120) : base.license.username,
+      key: typeof license.key === 'string' ? license.key.slice(0, 1000) : '',
+      expiry: typeof license.expiry === 'string' ? license.expiry : null,
+      activatedAt: typeof license.activatedAt === 'number' && Number.isFinite(license.activatedAt)
+        ? license.activatedAt
+        : undefined
+    },
+    outputDir: typeof merged.outputDir === 'string' ? merged.outputDir : '',
+    downloadDir: typeof merged.downloadDir === 'string' ? merged.downloadDir : base.downloadDir,
+    maxFfmpeg: Math.min(16, Math.max(1, Math.floor(Number(merged.maxFfmpeg) || base.maxFfmpeg))),
+    maxDownloads: Math.min(10, Math.max(1, Math.floor(Number(merged.maxDownloads) || base.maxDownloads))),
+    encoderPref: ENCODERS.has(merged.encoderPref) ? merged.encoderPref : 'auto',
+    autoStart: merged.autoStart === true
+  }
+}
+
 class DebouncedJsonFile {
   private timer: ReturnType<typeof setTimeout> | null = null
   constructor(
@@ -53,7 +82,9 @@ class DebouncedJsonFile {
       this.timer = null
     }
     try {
-      fs.writeFileSync(this.file, JSON.stringify(this.getData(), null, 2), 'utf8')
+      const tempFile = `${this.file}.${process.pid}.tmp`
+      fs.writeFileSync(tempFile, JSON.stringify(this.getData(), null, 2), 'utf8')
+      fs.renameSync(tempFile, this.file)
     } catch (e) {
       console.error('settings save failed:', e)
     }
@@ -78,7 +109,8 @@ export class SettingsStore {
             settingsMigrated = true
           }
         }
-        this.data = deepMerge(defaults(), saved)
+        if (!('accentColor' in saved)) settingsMigrated = true
+        this.data = normalizeSettings(saved)
       }
     } catch (e) {
       console.error('settings load failed:', e)
@@ -109,7 +141,7 @@ export class SettingsStore {
   }
 
   set(patch: Partial<AppSettings>): AppSettings {
-    this.data = deepMerge(this.data, patch)
+    this.data = normalizeSettings(deepMerge(this.data, patch))
     this.saver.schedule()
     this.broadcast()
     return this.data

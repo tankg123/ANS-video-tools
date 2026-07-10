@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import os from 'node:os'
 import type { SystemStats } from '@shared/types'
 import { EV_STATS } from '@shared/types'
+import { pm } from './process-manager'
 
 function cpuTimes(): { idle: number; total: number } {
   let idle = 0
@@ -31,7 +32,8 @@ export function startSystemStats(): void {
       cpu: Math.max(0, Math.min(100, cpu)),
       ramFreePct: Math.round((free / total) * 100),
       ramUsedMB: Math.round((total - free) / 1048576),
-      ramTotalMB: Math.round(total / 1048576)
+      ramTotalMB: Math.round(total / 1048576),
+      processingProcesses: pm.trackedCount(new Set(['download']))
     }
     for (const w of BrowserWindow.getAllWindows()) {
       if (!w.isDestroyed()) w.webContents.send(EV_STATS, stats)

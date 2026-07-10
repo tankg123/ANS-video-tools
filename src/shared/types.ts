@@ -70,6 +70,8 @@ export interface SystemStats {
   ramFreePct: number
   ramUsedMB: number
   ramTotalMB: number
+  /** Tiến trình xử lý cục bộ đang chạy, không gồm tải video. */
+  processingProcesses: number
 }
 
 export interface LicenseInfo {
@@ -82,6 +84,8 @@ export interface LicenseInfo {
 
 export interface AppSettings {
   language: 'vi' | 'en'
+  /** Màu nhấn chính của toàn bộ giao diện, dạng #RRGGBB. */
+  accentColor: string
   license: LicenseInfo
   /** thư mục xuất mặc định cho các module xử lý ('' = cùng thư mục file gốc) */
   outputDir: string

@@ -65,7 +65,6 @@ export default function register(ctx: ModuleContext): void {
       const taskIds: string[] = []
       const skipped: string[] = []
       const alreadySilent: string[] = []
-      const reservedOutputs = new Set<string>()
 
       for (const { input, info } of inspections) {
         if (!info?.video) {
@@ -77,14 +76,7 @@ export default function register(ctx: ModuleContext): void {
           continue
         }
 
-        let suffix = '_no_audio'
-        let output = ctx.deriveOutput(input, suffix, p.outputDir)
-        let copy = 1
-        while (reservedOutputs.has(output.toLowerCase())) {
-          suffix = `_no_audio (${copy++})`
-          output = ctx.deriveOutput(input, suffix, p.outputDir)
-        }
-        reservedOutputs.add(output.toLowerCase())
+        const output = ctx.deriveOutput(input, '_no_audio', p.outputDir)
 
         taskIds.push(
           ctx.enqueueFfmpeg({

@@ -20,6 +20,7 @@ import type {
  */
 
 const FETCH_TIMEOUT_MS = 90_000
+const VALID_QUALITIES = new Set<DlQuality>(['best', '2160', '1440', '1080', '720', '480', 'mp3', 'm4a'])
 
 /** Cấu trúc JSON thô từ yt-dlp -J (chỉ các field cần dùng) */
 interface RawEntry {
@@ -84,6 +85,7 @@ function flattenEntries(root: RawEntry, out: DlItem[]): void {
 
 /** args format theo chất lượng đã chọn */
 function qualityArgs(q: DlQuality): string[] {
+  if (!VALID_QUALITIES.has(q)) throw new Error(`Chất lượng tải không hợp lệ: ${String(q)}`)
   if (q === 'mp3') return ['-x', '--audio-format', 'mp3']
   if (q === 'm4a') return ['-x', '--audio-format', 'm4a']
   if (q === 'best') return ['-f', 'bv*+ba/b', '--merge-output-format', 'mp4']
@@ -99,7 +101,7 @@ export default function register(ctx: ModuleContext): void {
     const bin = ctx.resolveBin('yt-dlp')
     if (!bin) throw new Error('Không tìm thấy yt-dlp — hãy tải binaries trong mục "Kiểm tra cập nhật"')
 
-    const args = ['-J', '--flat-playlist', '--no-warnings', ...cookieArgs(p.cookies), url]
+    const args = ['-J', '--flat-playlist', '--no-warnings', ...cookieArgs(p?.cookies), '--', url]
 
     const stdout = await new Promise<string>((resolve, reject) => {
       const outLines: string[] = []
@@ -149,8 +151,16 @@ export default function register(ctx: ModuleContext): void {
 
   // ---- Đưa các item vào hàng đợi download ----
   ctx.handle('mod:downloader:download', async (p: DownloadPayload): Promise<DownloadResult> => {
-    const items = p?.items ?? []
+    const items = Array.isArray(p?.items) ? p.items : []
     if (items.length === 0) throw new Error('Không có video nào để tải')
+    for (const item of items) {
+      if (!item || typeof item.url !== 'string' || !item.url.trim()) {
+        throw new Error('Danh sách tải chứa video không có URL hợp lệ')
+      }
+      if (!VALID_QUALITIES.has(item.quality)) {
+        throw new Error(`Chất lượng tải không hợp lệ: ${String(item.quality)}`)
+      }
+    }
     const downloadDir = (p.downloadDir || ctx.settings.get('downloadDir') || '').trim()
     if (!downloadDir) throw new Error('Chưa chọn thư mục lưu')
     try {
@@ -172,6 +182,7 @@ export default function register(ctx: ModuleContext): void {
         '--no-mtime',
         '-o', outTpl,
         ...cArgs,
+        '--',
         item.url
       ]
       const taskId = ctx.enqueueYtdlp({

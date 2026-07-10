@@ -11,7 +11,7 @@ import { enqueueFetchRealesrgan, resolveRealesrgan } from '../binaries'
 import { logger } from '../logger'
 import type { ModuleContext } from '../module-context'
 import { parseFfmpegLine } from '../progress-parser'
-import { encoderQualityArgs, MP4_SAFE_AUDIO } from '../util'
+import { encoderQualityArgs, MP4_SAFE_AUDIO, releaseOutput } from '../util'
 
 /** Đếm file khung hình theo đuôi trong thư mục (thư mục chưa tồn tại / lỗi đọc → 0) */
 function countFrames(dir: string, ext: string): number {
@@ -113,6 +113,24 @@ export default function register(ctx: ModuleContext): void {
 
   ctx.handle('mod:upscale:start', async (p: UpscaleStartPayload): Promise<UpscaleStartResult> => {
     if (!Array.isArray(p?.inputs) || p.inputs.length === 0) throw new Error('Chưa chọn video nào')
+    if (p.engine !== 'fast' && p.engine !== 'realesrgan') throw new Error('Engine upscale không hợp lệ')
+    if (p.codec !== 'h264' && p.codec !== 'hevc') throw new Error('Codec đầu ra không hợp lệ')
+    if (p.target !== 1440 && p.target !== 2160) throw new Error('Độ phân giải đích không hợp lệ')
+    if (p.frameFormat !== undefined && p.frameFormat !== 'jpg' && p.frameFormat !== 'png') {
+      throw new Error('Định dạng khung hình tạm không hợp lệ')
+    }
+    if (p.tileSize !== undefined && ![0, 256, 512].includes(p.tileSize)) {
+      throw new Error('Tile size không hợp lệ')
+    }
+    if (p.fpsLimit !== undefined && ![0, 24, 30].includes(p.fpsLimit)) {
+      throw new Error('Giới hạn FPS không hợp lệ')
+    }
+    if (
+      p.engine === 'realesrgan' &&
+      !['realesrgan-x4plus', 'realesrgan-x4plus-anime', 'realesr-animevideov3'].includes(p.model)
+    ) {
+      throw new Error('Model AI không hợp lệ')
+    }
 
     // Engine AI phải sẵn sàng TRƯỚC khi enqueue bất kỳ file nào
     const engine = p.engine === 'realesrgan' ? resolveRealesrgan() : null
@@ -128,27 +146,9 @@ export default function register(ctx: ModuleContext): void {
     const taskIds: string[] = []
     const errors: { input: string; error: string }[] = []
 
-    // Giữ chỗ output: deriveOutput chỉ kiểm tra file TRÊN ĐĨA, nhưng file chỉ xuất hiện
-    // khi task CHẠY (với AI có thể hàng giờ sau) — 2 input trùng tên trong 1 batch (hoặc
-    // batch trước còn đang chờ) sẽ derive cùng path rồi -y đè mất kết quả của nhau.
-    // Set so sánh lowercase vì path Windows không phân biệt hoa thường.
-    const reserved = new Set<string>()
-    for (const tsk of ctx.queue.list()) {
-      if (
-        tsk.type === 'upscale' &&
-        (tsk.status === 'queued' || tsk.status === 'running') &&
-        tsk.outputPath
-      ) {
-        reserved.add(tsk.outputPath.toLowerCase())
-      }
-    }
+    // deriveOutput giữ chỗ toàn cục cho cả task queued/running để tránh trùng basename.
     const deriveUnique = (input: string, suffix: string): string => {
-      let out = ctx.deriveOutput(input, suffix, p.outputDir, '.mp4')
-      for (let i = 1; reserved.has(out.toLowerCase()); i++) {
-        out = ctx.deriveOutput(input, `${suffix} (${i})`, p.outputDir, '.mp4')
-      }
-      reserved.add(out.toLowerCase())
-      return out
+      return ctx.deriveOutput(input, suffix, p.outputDir, '.mp4')
     }
 
     // Xử lý TỪNG input độc lập — file lỗi dồn vào errors, không chặn file khác
@@ -222,6 +222,7 @@ export default function register(ctx: ModuleContext): void {
             pool: 'ffmpeg',
             title: `Upscale ${label} AI: ${path.basename(input)}`,
             meta: { engine: 'realesrgan', model, mode: 're-encode', target: p.target, frameFormat: frameExt, fpsLimit },
+            onSettled: () => releaseOutput(output),
             run: async (api) => {
               const ffmpegBin = ctx.resolveBin('ffmpeg')
               if (!ffmpegBin) {
@@ -339,8 +340,11 @@ export default function register(ctx: ModuleContext): void {
                   clearInterval(timer)
                 }
                 if (api.isCancelled()) return
-                if (!countFrames(framesDir, frameExt)) {
-                  throw new Error('Engine AI không tạo được khung hình nào — kiểm tra GPU/driver Vulkan (xem log)')
+                const outputFrames = countFrames(framesDir, frameExt)
+                if (outputFrames !== totalFrames) {
+                  throw new Error(
+                    `Engine AI tạo thiếu khung hình (${outputFrames}/${totalFrames}) — kiểm tra GPU/driver Vulkan (xem log)`
+                  )
                 }
 
                 // ----- Giai đoạn C (85→100%): nén khung hình + audio gốc thành MP4 -----

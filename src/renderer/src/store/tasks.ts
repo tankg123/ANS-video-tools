@@ -31,7 +31,8 @@ export const useTasks = create<TasksState>((set, get) => ({
   remove: (ids) => {
     const byId = { ...get().byId }
     for (const id of ids) delete byId[id]
-    set({ byId, order: get().order.filter((id) => !ids.includes(id)) })
+    const removed = new Set(ids)
+    set({ byId, order: get().order.filter((id) => !removed.has(id)) })
   },
   hydrate: (list) =>
     set({

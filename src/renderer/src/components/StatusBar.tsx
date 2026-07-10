@@ -3,28 +3,64 @@ import { appInfo, openExternal } from '../api'
 import { useT, useToggleLang } from '../i18n'
 import { useLang } from '../store/settings'
 import { useUi } from '../store/ui'
+import { Icon } from './Icon'
 
 export function StatusBar(): React.JSX.Element {
   const t = useT()
   const lang = useLang()
   const toggle = useToggleLang()
   const stats = useUi((s) => s.stats)
-  const [version, setVersion] = useState('1.0.0')
+  const [version, setVersion] = useState('')
 
   useEffect(() => {
-    appInfo()
-      .then((i) => setVersion(i.version))
+    let alive = true
+    void appInfo()
+      .then((info) => {
+        if (alive) setVersion(info.version)
+      })
       .catch(() => {})
+    return () => {
+      alive = false
+    }
   }, [])
+
+  const cpu = stats?.cpu ?? 0
+  const ramUsedPct = stats ? Math.max(0, Math.min(100, 100 - stats.ramFreePct)) : 0
 
   return (
     <footer className="statusbar">
-      <span>© 2026 ANS Studio · ANS Video Tools v{version}</span>
-      <a onClick={() => void openExternal('https://facebook.com')}>Facebook</a>
-      <a onClick={() => void openExternal('https://youtube.com')}>YouTube</a>
-      <span>☎ 0900 000 000</span>
+      <span className="status-product">
+        <span className="status-online" />
+        ANS Video Tools {version && `v${version}`}
+      </span>
+      <span className="status-divider" />
+      <span className="status-local">
+        <Icon name="shield" size={13} />
+        {t('Xử lý cục bộ', 'Local processing')}
+      </span>
+      <button
+        className="status-link"
+        onClick={() => void openExternal('https://github.com/tankg123/ANS-video-tools')}
+      >
+        GitHub <Icon name="external" size={12} />
+      </button>
+
       <div className="spacer" />
-      <div className="lang-toggle">
+
+      <div className="resource-meter" title={t('Mức sử dụng CPU', 'CPU usage')}>
+        <Icon name="cpu" size={14} />
+        <span>CPU</span>
+        <i><b style={{ width: `${cpu}%` }} /></i>
+        <strong>{stats ? `${cpu}%` : '—'}</strong>
+      </div>
+      <div className="resource-meter" title={t('Mức sử dụng bộ nhớ', 'Memory usage')}>
+        <Icon name="memory" size={14} />
+        <span>RAM</span>
+        <i><b style={{ width: `${ramUsedPct}%` }} /></i>
+        <strong>{stats ? `${ramUsedPct}%` : '—'}</strong>
+      </div>
+
+      <div className="lang-toggle" aria-label={t('Ngôn ngữ', 'Language')}>
         <button className={lang === 'vi' ? 'on' : ''} onClick={() => lang !== 'vi' && toggle()}>
           VI
         </button>
@@ -32,12 +68,6 @@ export function StatusBar(): React.JSX.Element {
           EN
         </button>
       </div>
-      <span className="meter" title={t('Cập nhật mỗi 2 giây', 'Updates every 2s')}>
-        🖥 CPU {stats ? `${stats.cpu}%` : '—'}
-      </span>
-      <span className="meter">
-        💾 RAM {t('trống', 'free')} {stats ? `${stats.ramFreePct}%` : '—'}
-      </span>
     </footer>
   )
 }

@@ -17,6 +17,21 @@ export type ModuleKey =
   | 'updater'
 
 const LEGACY_LIVE_MODULES = new Set(['super-live', 'basic-live', 'drive-live'])
+const VALID_MODULES = new Set<ModuleKey>([
+  'render',
+  'remove-audio',
+  'upscale',
+  'intro-outro-logo',
+  'split',
+  'trim',
+  'green-screen',
+  'loop',
+  'concat',
+  'random',
+  'random-audio',
+  'downloader',
+  'updater'
+])
 
 function initialModule(): ModuleKey {
   const saved = localStorage.getItem('vt.activeModule')
@@ -24,7 +39,9 @@ function initialModule(): ModuleKey {
     localStorage.setItem('vt.activeModule', 'downloader')
     return 'downloader'
   }
-  return (saved as ModuleKey) || 'downloader'
+  if (saved && VALID_MODULES.has(saved as ModuleKey)) return saved as ModuleKey
+  localStorage.removeItem('vt.activeModule')
+  return 'downloader'
 }
 
 interface Toast extends ToastMsg {

@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
-import { encoderQualityArgs } from '../util'
+import { encoderQualityArgs, releaseOutput } from '../util'
 import type {
   IntroOutroLogoStartPayload,
   IntroOutroLogoStartResult,
@@ -24,15 +24,16 @@ const OVERLAY_POS: Record<LogoPosition, string> = {
   br: 'main_w-overlay_w-16:main_h-overlay_h-16',
   center: '(main_w-overlay_w)/2:(main_h-overlay_h)/2'
 }
+const LOGO_POSITIONS = new Set<LogoPosition>(['tl', 'tr', 'bl', 'br', 'center'])
 
 /** Chuẩn hoá audio để concat không lỗi khác sample rate / channel layout */
-const AUDIO_NORM = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo'
+const AUDIO_NORM = 'asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo'
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
 
 export default function register(ctx: ModuleContext): void {
   ctx.handle('mod:intro-outro-logo:start', async (p: IntroOutroLogoStartPayload): Promise<IntroOutroLogoStartResult> => {
-    const inputs = (p.inputs ?? []).filter(Boolean)
+    const inputs = (p?.inputs ?? []).filter(Boolean)
     if (!inputs.length) throw new Error('Chưa chọn video chính')
 
     const hasIntro = !!p.intro
@@ -49,12 +50,21 @@ export default function register(ctx: ModuleContext): void {
     let logoPos: LogoPosition = 'br'
     let logoEnable = '' // '' = toàn bộ video
     if (hasLogo && p.logo) {
-      logoWidthPct = clamp(p.logo.widthPct || 15, 1, 100)
-      logoAlpha = (clamp(p.logo.opacityPct ?? 100, 0, 100) / 100).toFixed(3)
-      logoPos = p.logo.position ?? 'br'
+      if (!Number.isFinite(p.logo.widthPct) || !Number.isFinite(p.logo.opacityPct)) {
+        throw new Error('Kích thước hoặc độ mờ logo không hợp lệ')
+      }
+      if (!LOGO_POSITIONS.has(p.logo.position)) throw new Error('Vị trí logo không hợp lệ')
+      logoWidthPct = clamp(p.logo.widthPct, 1, 100)
+      logoAlpha = (clamp(p.logo.opacityPct, 0, 100) / 100).toFixed(3)
+      logoPos = p.logo.position
       if (!p.logo.fullDuration) {
-        const s = Math.max(0, p.logo.startSec ?? 0)
-        const e = p.logo.endSec ?? 0
+        const rawStart = p.logo.startSec ?? 0
+        const rawEnd = p.logo.endSec ?? 0
+        if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) {
+          throw new Error('Khoảng hiển thị logo không hợp lệ')
+        }
+        const s = Math.max(0, rawStart)
+        const e = rawEnd
         if (!(e > s)) {
           throw new Error('Khoảng hiển thị logo không hợp lệ: giây kết thúc phải lớn hơn giây bắt đầu')
         }
@@ -76,7 +86,8 @@ export default function register(ctx: ModuleContext): void {
 
     // ---- Giai đoạn 1: probe + build args cho TẤT CẢ video chính (lỗi thì không enqueue gì) ----
     const jobs: { title: string; args: string[]; durationSec: number; output: string }[] = []
-    for (const input of inputs) {
+    try {
+      for (const input of inputs) {
       const info = await ctx.probe(input)
       if (!info.video) throw new Error(`File không có luồng video: ${path.basename(input)}`)
       if (needConcat && !info.audio) {
@@ -111,12 +122,12 @@ export default function register(ctx: ModuleContext): void {
       // Nhánh video chính (+ logo nếu có)
       if (hasLogo) {
         const lw = Math.max(2, Math.round((W * logoWidthPct) / 100))
-        parts.push(`[0:v]fps=${F},setsar=1[mv0]`)
+        parts.push(`[0:v]setpts=PTS-STARTPTS,fps=${F},setsar=1[mv0]`)
         parts.push(`[${logoIdx}:v]scale=${lw}:-1,format=rgba,colorchannelmixer=aa=${logoAlpha}[lg]`)
         parts.push(`[mv0][lg]overlay=${OVERLAY_POS[logoPos]}${logoEnable},format=yuv420p[mv]`)
         mainV = '[mv]'
       } else {
-        parts.push(`[0:v]fps=${F},setsar=1,format=yuv420p[mv]`)
+        parts.push(`[0:v]setpts=PTS-STARTPTS,fps=${F},setsar=1,format=yuv420p[mv]`)
         mainV = '[mv]'
       }
 
@@ -130,7 +141,7 @@ export default function register(ctx: ModuleContext): void {
         const pairs: string[] = []
         if (hasIntro) {
           parts.push(
-            `[${introIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
+            `[${introIdx}:v]setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
               `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${F},format=yuv420p[iv]`
           )
           parts.push(`[${introIdx}:a]${AUDIO_NORM}[ia]`)
@@ -139,7 +150,7 @@ export default function register(ctx: ModuleContext): void {
         pairs.push(`${mainV}[ma]`)
         if (hasOutro) {
           parts.push(
-            `[${outroIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
+            `[${outroIdx}:v]setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
               `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${F},format=yuv420p[ov]`
           )
           parts.push(`[${outroIdx}:a]${AUDIO_NORM}[oa]`)
@@ -168,7 +179,11 @@ export default function register(ctx: ModuleContext): void {
       ]
 
       const tags = [hasIntro && 'intro', hasOutro && 'outro', hasLogo && 'logo'].filter(Boolean).join('+')
-      jobs.push({ title: `Chèn ${tags}: ${path.basename(input)}`, args, durationSec, output })
+        jobs.push({ title: `Chèn ${tags}: ${path.basename(input)}`, args, durationSec, output })
+      }
+    } catch (error) {
+      for (const job of jobs) releaseOutput(job.output)
+      throw error
     }
 
     // ---- Giai đoạn 2: enqueue toàn bộ ----

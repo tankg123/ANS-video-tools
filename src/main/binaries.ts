@@ -203,6 +203,10 @@ export function enqueueFetchRealesrgan(): string {
  * Trả về task id để UI theo dõi tiến trình.
  */
 export function enqueueFetchBinaries(): string {
+  const existing = queue
+    .list()
+    .find((task) => task.type === 'fetch-bins' && (task.status === 'queued' || task.status === 'running'))
+  if (existing) return existing.id
   return queue.add({
     type: 'fetch-bins',
     title: 'Tải FFmpeg + yt-dlp',

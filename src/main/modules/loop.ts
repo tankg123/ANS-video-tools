@@ -1,4 +1,3 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
 import type { LoopStartPayload } from '@shared/modules/loop'
@@ -17,32 +16,29 @@ export default function register(ctx: ModuleContext): void {
     if (!(d > 0)) throw new Error('Không đọc được thời lượng video nguồn')
 
     const outputDir = p.outputDir?.trim() || undefined
-    if (outputDir) {
-      try {
-        if (!fs.statSync(outputDir).isDirectory()) throw new Error()
-      } catch {
-        throw new Error('Thư mục xuất không tồn tại hoặc không truy cập được')
-      }
-    }
-
-    const output = ctx.deriveOutput(p.input, '_loop', outputDir)
-    let args: string[]
+    let count: number | undefined
+    let target: number | undefined
     let durationSec: number
 
     if (p.mode === 'duration') {
       const T = p.targetSec ?? 0
-      if (!(T > 0)) throw new Error('Tổng thời lượng mục tiêu phải lớn hơn 0')
-      // Lặp dư 1 vòng rồi cắt chính xác bằng -t T
-      const loops = Math.max(0, Math.ceil(T / d))
-      args = ['-stream_loop', String(loops), '-i', p.input, '-c', 'copy', '-t', String(T), output]
+      if (!Number.isFinite(T) || !(T > 0)) throw new Error('Tổng thời lượng mục tiêu phải lớn hơn 0')
+      target = T
       durationSec = T
-    } else {
+    } else if (p.mode === 'count') {
       const C = Math.floor(p.count ?? 0)
-      if (!(C >= 1)) throw new Error('Số lần lặp phải từ 1 trở lên')
-      // -stream_loop N = phát thêm N lần (tổng N+1 lần)
-      args = ['-stream_loop', String(C - 1), '-i', p.input, '-c', 'copy', output]
+      if (!Number.isFinite(C) || !(C >= 1)) throw new Error('Số lần lặp phải từ 1 trở lên')
+      count = C
       durationSec = d * C
+    } else {
+      throw new Error('Chế độ lặp không hợp lệ')
     }
+
+    const output = ctx.deriveOutput(p.input, '_loop', outputDir)
+    // -stream_loop N = phát thêm N lần (tổng N+1 lần); duration mode lặp dư rồi cắt bằng -t.
+    const args = target !== undefined
+      ? ['-stream_loop', String(Math.max(0, Math.ceil(target / d))), '-i', p.input, '-c', 'copy', '-t', String(target), output]
+      : ['-stream_loop', String((count as number) - 1), '-i', p.input, '-c', 'copy', output]
 
     return ctx.enqueueFfmpeg({
       type: 'loop',

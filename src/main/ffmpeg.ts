@@ -1,9 +1,11 @@
+import fs from 'node:fs'
 import type { TaskPool } from '@shared/types'
 import { resolveBin } from './binaries'
 import { logger } from './logger'
 import { pm } from './process-manager'
 import { clampPct, ffmpegEta, parseFfmpegLine, parseYtdlpLine } from './progress-parser'
 import { queue, TaskApi } from './task-queue'
+import { releaseOutput } from './util'
 
 export interface FfmpegTaskOptions {
   type: string
@@ -17,6 +19,8 @@ export interface FfmpegTaskOptions {
   cwd?: string
   /** không tự thêm -y (vd lệnh không ghi file) */
   noOverwriteFlag?: boolean
+  /** File tạm riêng của task, luôn xóa sau completed/error/killed. */
+  cleanupPaths?: string[]
 }
 
 /** Chạy 1 process và trả promise theo chuẩn task (dùng chung cho ffmpeg/yt-dlp). */
@@ -50,6 +54,14 @@ export function enqueueFfmpeg(o: FfmpegTaskOptions): string {
     title: o.title,
     pool: o.pool ?? 'ffmpeg',
     meta: o.meta,
+    onSettled: async () => {
+      releaseOutput(o.outputPath)
+      await Promise.all(
+        (o.cleanupPaths ?? []).map((filePath) =>
+          fs.promises.rm(filePath, { force: true }).catch(() => {})
+        )
+      )
+    },
     run: async (api) => {
       const bin = resolveBin('ffmpeg')
       if (!bin) throw new Error('Không tìm thấy FFmpeg — hãy tải binaries trong mục "Kiểm tra cập nhật"')

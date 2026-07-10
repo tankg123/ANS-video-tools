@@ -18,6 +18,8 @@ export interface AddTaskOptions {
   pool?: TaskPool
   meta?: Record<string, unknown>
   run(api: TaskApi): Promise<void>
+  /** Chạy đúng một lần khi task hoàn tất, lỗi hoặc bị hủy cả khi còn queued. */
+  onSettled?: () => void | Promise<void>
 }
 
 interface Rec {
@@ -25,6 +27,8 @@ interface Rec {
   run: (api: TaskApi) => Promise<void>
   cancelled: boolean
   cancelHook?: () => void
+  onSettled?: () => void | Promise<void>
+  settled: boolean
 }
 
 const FLUSH_MS = 250 // throttle cập nhật UI tối đa 4 lần/giây (spec 5.3)
@@ -71,7 +75,13 @@ export class TaskQueue {
       createdAt: Date.now(),
       meta: opts.meta
     }
-    this.recs.set(id, { info, run: opts.run, cancelled: false })
+    this.recs.set(id, {
+      info,
+      run: opts.run,
+      cancelled: false,
+      onSettled: opts.onSettled,
+      settled: false
+    })
     this.order.push(id)
     this.markDirty(id)
     this.pump(info.pool)
@@ -131,7 +141,8 @@ export class TaskQueue {
       }
     }
     if (removed.length) {
-      this.order = this.order.filter((id) => !removed.includes(id))
+      const removedSet = new Set(removed)
+      this.order = this.order.filter((id) => !removedSet.has(id))
       this.broadcast(EV_TASK_REMOVED, removed)
     }
     return removed
@@ -197,6 +208,18 @@ export class TaskQueue {
     rec.info.finishedAt = Date.now()
     if (status === 'completed') rec.info.progress = 100
     if (error) rec.info.error = error
+    rec.cancelHook = undefined
+    if (!rec.settled) {
+      rec.settled = true
+      const onSettled = rec.onSettled
+      rec.onSettled = undefined
+      rec.run = async () => {}
+      void Promise.resolve()
+        .then(() => onSettled?.())
+        .catch((settleError: unknown) => {
+          console.warn('Task cleanup failed', settleError)
+        })
+    }
     this.markDirty(id)
   }
 

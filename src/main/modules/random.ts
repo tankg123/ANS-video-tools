@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { ModuleContext } from '../module-context'
 import type { FfmpegTaskOptions } from '../ffmpeg'
-import { encoderQualityArgs } from '../util'
+import { encoderQualityArgs, releaseOutput } from '../util'
 import type { RandomStartPayload, RandomThumbPayload } from '@shared/modules/random'
 
 /** làm tròn xuống số chẵn (yêu cầu của h264/yuv420p) */
@@ -77,22 +77,29 @@ async function buildSpec(
   const tag = variantIdx > 0 ? ` — bản ${variantIdx}` : ''
 
   // ---- Chế độ copy: concat demuxer, không re-encode ----
-  if (!forceReencode && isCompatible(infos)) {
-    const exts = new Set(inputs.map((f) => path.extname(f).toLowerCase()))
-    const ext = exts.size === 1 && path.extname(first) ? path.extname(first) : '.mp4'
+  const exts = new Set(inputs.map((f) => path.extname(f).toLowerCase()))
+  if (!forceReencode && exts.size === 1 && isCompatible(infos)) {
+    const ext = path.extname(first) || '.mkv'
     const output = ctx.deriveOutput(first, suffix, outputDir, ext)
     const lines = inputs.map((f) => `file '${ctx.concatEscape(f)}'`).join('\n') + '\n'
-    const listFile = ctx.writeTempFile(
-      first,
-      `random_${Date.now()}_${variantIdx}_${Math.random().toString(36).slice(2, 7)}.txt`,
-      lines
-    )
+    let listFile: string
+    try {
+      listFile = ctx.writeTempFile(
+        first,
+        `random_${Date.now()}_${variantIdx}_${Math.random().toString(36).slice(2, 7)}.txt`,
+        lines
+      )
+    } catch (error) {
+      releaseOutput(output)
+      throw error
+    }
     return {
       type: 'random',
       title: `Ghép ngẫu nhiên ${inputs.length} video (copy)${tag}`,
       args: ['-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', output],
       durationSec: totalDur,
       outputPath: output,
+      cleanupPaths: [listFile],
       meta: { mode: 'copy', count: inputs.length, variant: variantIdx }
     }
   }
@@ -118,10 +125,10 @@ async function buildSpec(
   const pads: string[] = []
   for (let i = 0; i < n; i++) {
     parts.push(
-      `[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
+      `[${i}:v]setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
         `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${F},format=yuv420p[v${i}]`
     )
-    parts.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`)
+    parts.push(`[${i}:a]asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`)
     pads.push(`[v${i}][a${i}]`)
   }
   parts.push(`${pads.join('')}concat=n=${n}:v=1:a=1[vout][aout]`)
@@ -156,15 +163,27 @@ async function buildSpec(
  */
 export default function register(ctx: ModuleContext): void {
   ctx.handle('mod:random:start', async (p: RandomStartPayload) => {
-    const jobs = Array.isArray(p.jobs) ? p.jobs : []
+    const jobs = Array.isArray(p?.jobs) ? p.jobs : []
     if (!jobs.length) throw new Error('Chưa có bản ghép nào — hãy "Trộn ngẫu nhiên" trước')
     // Hai pha: probe + validate + dựng spec cho TẤT CẢ bản trước; nếu một bản lỗi (vd thiếu
     // audio khi phải re-encode) thì reject trước khi enqueue bất kỳ task nào (all-or-nothing).
-    const specs = await Promise.all(
+    const built = await Promise.allSettled(
       jobs.map((inputs, i) =>
         buildSpec(ctx, inputs, !!p.forceReencode, p.outputDir, jobs.length > 1 ? i + 1 : 0)
       )
     )
+    const failed = built.find((result) => result.status === 'rejected')
+    if (failed) {
+      for (const result of built) {
+        if (result.status !== 'fulfilled') continue
+        releaseOutput(result.value.outputPath)
+        for (const filePath of result.value.cleanupPaths ?? []) {
+          try { fs.rmSync(filePath, { force: true }) } catch { /* ignore */ }
+        }
+      }
+      throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason))
+    }
+    const specs = built.map((result) => (result as PromiseFulfilledResult<FfmpegTaskOptions>).value)
     return specs.map((s) => ctx.enqueueFfmpeg(s))
   })
 

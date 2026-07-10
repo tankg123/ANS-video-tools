@@ -4,7 +4,7 @@ import { kvGet, kvSet } from '../../api'
 
 /**
  * Store danh sách video tải — persist qua kv namespace 'downloader' (key 'items'),
- * debounce ghi ~1s bằng setTimeout (spec 4.10: mở lại app vẫn còn danh sách).
+ * gửi KV ngay cho main; SettingsStore chịu trách nhiệm debounce/flush đĩa khi thoát.
  */
 
 interface DlState {
@@ -20,14 +20,8 @@ interface DlState {
   clear(): void
 }
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-
 function schedulePersist(items: DlItem[]): void {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    saveTimer = null
-    void kvSet('downloader', 'items', items)
-  }, 1000)
+  void kvSet('downloader', 'items', items)
 }
 
 export const useDl = create<DlState>((set, get) => ({

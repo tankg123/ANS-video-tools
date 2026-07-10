@@ -1,9 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { useShallow } from 'zustand/react/shallow'
 import { fmtElapsed } from '@shared/time'
 import { cancelTask, clearFinishedTasks, showInFolder } from '../api'
 import { useT } from '../i18n'
-import { useTask, useTaskIdsByTypes } from '../store/tasks'
+import { useTask, useTaskIdsByTypes, useTasks } from '../store/tasks'
+import { Icon } from './Icon'
 import { LogModal } from './LogModal'
 import { ProgressBar } from './ProgressBar'
 import { StatusChip } from './StatusChip'
@@ -21,13 +23,27 @@ function Elapsed({ startedAt, finishedAt }: { startedAt?: number; finishedAt?: n
   return <span className="mono">{fmtElapsed((finishedAt ?? Date.now()) - startedAt)}</span>
 }
 
-const Row = memo(function Row({ id, onLog }: { id: string; onLog: (id: string) => void }): React.JSX.Element | null {
+const Row = memo(function Row({
+  id,
+  onLog,
+  virtualIndex,
+  measureRef
+}: {
+  id: string
+  onLog: (id: string) => void
+  virtualIndex?: number
+  measureRef?: (node: HTMLTableRowElement | null) => void
+}): React.JSX.Element | null {
   const t = useT()
   const task = useTask(id)
   if (!task) return null
   const active = task.status === 'running' || task.status === 'queued'
   return (
-    <tr>
+    <tr
+      ref={measureRef}
+      data-index={virtualIndex}
+      className={`task-row ${task.status}`}
+    >
       <td className="ellipsis" title={task.title} style={{ maxWidth: 260 }}>
         {task.title}
         {task.error && (
@@ -60,20 +76,22 @@ const Row = memo(function Row({ id, onLog }: { id: string; onLog: (id: string) =
       <td>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           {active && (
-            <button className="btn btn-sm btn-danger" onClick={() => void cancelTask(id)}>
+            <button className="btn btn-sm btn-stop" onClick={() => void cancelTask(id)}>
+              <Icon name="stop" size={14} />
               {t('Dừng', 'Stop')}
             </button>
           )}
-          <button className="btn btn-sm btn-ghost" title={t('Xem log', 'View log')} onClick={() => onLog(id)}>
-            📄
+          <button className="btn btn-sm btn-icon btn-ghost" aria-label={t('Xem log', 'View log')} title={t('Xem log', 'View log')} onClick={() => onLog(id)}>
+            <Icon name="file-text" size={15} />
           </button>
           {task.outputPath && task.status === 'completed' && (
             <button
-              className="btn btn-sm btn-ghost"
+              className="btn btn-sm btn-icon btn-ghost"
+              aria-label={t('Mở thư mục', 'Show in folder')}
               title={t('Mở thư mục', 'Show in folder')}
               onClick={() => void showInFolder(task.outputPath!)}
             >
-              📂
+              <Icon name="folder" size={15} />
             </button>
           )}
         </div>
@@ -89,6 +107,23 @@ const Row = memo(function Row({ id, onLog }: { id: string; onLog: (id: string) =
 export function TaskTable({ types, title }: { types: string[]; title?: string }): React.JSX.Element {
   const t = useT()
   const ids = useTaskIdsByTypes(types)
+  const summary = useTasks(
+    useShallow((state) => {
+      let running = 0
+      let queued = 0
+      let finished = 0
+      let errors = 0
+      for (const id of ids) {
+        const task = state.byId[id]
+        if (!task) continue
+        if (task.status === 'running') running++
+        else if (task.status === 'queued') queued++
+        else finished++
+        if (task.status === 'error') errors++
+      }
+      return { running, queued, finished, errors }
+    })
+  )
   const [logId, setLogId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const useVirtual = ids.length > 50
@@ -96,7 +131,7 @@ export function TaskTable({ types, title }: { types: string[]; title?: string })
   const virtualizer = useVirtualizer({
     count: useVirtual ? ids.length : 0,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 44,
+    estimateSize: () => 52,
     overscan: 10
   })
 
@@ -116,17 +151,25 @@ export function TaskTable({ types, title }: { types: string[]; title?: string })
   return (
     <div className="card">
       <div className="card-title">
+        <span className="card-title-icon"><Icon name="activity" size={16} /></span>
         {title ?? t('Hàng đợi tác vụ', 'Task queue')} <span className="badge">{ids.length}</span>
+        <span className="task-summary">
+          {summary.running > 0 && <span className="running">{summary.running} {t('đang chạy', 'running')}</span>}
+          {summary.queued > 0 && <span>{summary.queued} {t('đang chờ', 'queued')}</span>}
+          {summary.errors > 0 && <span className="error">{summary.errors} {t('lỗi', 'errors')}</span>}
+        </span>
         <span className="right">
-          <button className="btn btn-sm btn-ghost" onClick={() => void clearFinishedTasks(types)}>
+          <button className="btn btn-sm btn-ghost" disabled={summary.finished === 0} onClick={() => void clearFinishedTasks(types)}>
+            <Icon name="trash" size={14} />
             {t('Xoá đã xong', 'Clear finished')}
           </button>
         </span>
       </div>
       {ids.length === 0 ? (
         <div className="empty-state">
-          <div className="big">🗂️</div>
-          {t('Chưa có tác vụ nào', 'No tasks yet')}
+          <div className="empty-icon"><Icon name="inbox" size={28} /></div>
+          <strong>{t('Chưa có tác vụ', 'No tasks yet')}</strong>
+          <span>{t('Tác vụ mới sẽ xuất hiện tại đây để bạn theo dõi.', 'New jobs will appear here with live progress.')}</span>
         </div>
       ) : (
         <div className="table-wrap" ref={scrollRef} style={{ maxHeight: 420 }}>
@@ -135,19 +178,28 @@ export function TaskTable({ types, title }: { types: string[]; title?: string })
             {useVirtual ? (
               <tbody style={{ position: 'relative' }}>
                 {virtualizer.getVirtualItems().length > 0 && (
-                  <tr style={{ height: virtualizer.getVirtualItems()[0].start }} aria-hidden />
+                  <tr aria-hidden><td colSpan={6} style={{ height: virtualizer.getVirtualItems()[0].start, padding: 0 }} /></tr>
                 )}
                 {virtualizer.getVirtualItems().map((v) => (
-                  <Row key={ids[v.index]} id={ids[v.index]} onLog={setLogId} />
+                  <Row
+                    key={ids[v.index]}
+                    id={ids[v.index]}
+                    onLog={setLogId}
+                    virtualIndex={v.index}
+                    measureRef={virtualizer.measureElement}
+                  />
                 ))}
-                <tr
-                  style={{
-                    height:
-                      virtualizer.getTotalSize() -
-                      (virtualizer.getVirtualItems().at(-1)?.end ?? 0)
-                  }}
-                  aria-hidden
-                />
+                <tr aria-hidden>
+                  <td
+                    colSpan={6}
+                    style={{
+                      height:
+                        virtualizer.getTotalSize() -
+                        (virtualizer.getVirtualItems().at(-1)?.end ?? 0),
+                      padding: 0
+                    }}
+                  />
+                </tr>
               </tbody>
             ) : (
               <tbody>

@@ -1,11 +1,10 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { pathForFile, pickFiles, pickFolder, scanDir, statPath } from '../api'
 import { useT } from '../i18n'
+import { useUi } from '../store/ui'
+import { Icon } from './Icon'
 
-/**
- * Vùng kéo-thả file/thư mục video + nút chọn file.
- * Thư mục sẽ được quét đệ quy lấy file video (main process).
- */
+/** Vùng nhập media dùng chung: kéo-thả, chọn file hoặc quét một thư mục video. */
 export function FileDrop({
   onFiles,
   multi = true,
@@ -16,70 +15,114 @@ export function FileDrop({
   onFiles: (paths: string[]) => void
   multi?: boolean
   allowFolder?: boolean
-  /** filter cho dialog, vd [{name:'Ảnh', extensions:['png']}] */
   accept?: { name: string; extensions: string[] }[]
   hint?: string
 }): React.JSX.Element {
   const t = useT()
+  const pushToast = useUi((s) => s.pushToast)
   const [over, setOver] = useState(false)
+  const allowedExtensions = useMemo(
+    () => new Set((accept ?? []).flatMap((filter) => filter.extensions.map((ext) => `.${ext.toLowerCase()}`))),
+    [accept]
+  )
+
+  const filterAccepted = useCallback(
+    (paths: string[]): string[] => {
+      if (!allowedExtensions.size) return paths
+      return paths.filter((item) => {
+        const dot = item.lastIndexOf('.')
+        return dot >= 0 && allowedExtensions.has(item.slice(dot).toLowerCase())
+      })
+    },
+    [allowedExtensions]
+  )
+
+  const commit = useCallback(
+    (paths: string[], originalCount = paths.length): void => {
+      const accepted = [...new Set(filterAccepted(paths))]
+      const selected = multi ? accepted : accepted.slice(0, 1)
+      if (selected.length) onFiles(selected)
+      const rejected = Math.max(0, originalCount - accepted.length)
+      if (rejected > 0) {
+        pushToast(
+          'info',
+          t(
+            `Đã bỏ qua ${rejected} file không đúng định dạng`,
+            `Skipped ${rejected} unsupported file(s)`
+          )
+        )
+      }
+    },
+    [filterAccepted, multi, onFiles, pushToast, t]
+  )
+
+  const browseFiles = useCallback(async (): Promise<void> => {
+    const paths = await pickFiles({ multi, filters: accept })
+    if (paths.length) commit(paths)
+  }, [accept, commit, multi])
+
+  const browseFolder = useCallback(async (): Promise<void> => {
+    const dir = await pickFolder()
+    if (!dir) return
+    const files = await scanDir(dir)
+    if (files.length) commit(files)
+    else pushToast('info', t('Không tìm thấy video phù hợp trong thư mục', 'No supported videos found in this folder'))
+  }, [commit, pushToast, t])
 
   const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault()
+    async (event: React.DragEvent): Promise<void> => {
+      event.preventDefault()
       setOver(false)
-      const files = Array.from(e.dataTransfer.files)
-      const out: string[] = []
-      for (const f of files) {
-        const p = pathForFile(f)
-        if (!p) continue
-        const st = await statPath(p)
-        if (st.isDirectory && allowFolder) {
-          out.push(...(await scanDir(p)))
-        } else if (st.exists && !st.isDirectory) {
-          out.push(p)
-        }
-      }
-      if (out.length) onFiles(multi ? out : out.slice(0, 1))
+      const dropped = Array.from(event.dataTransfer.files)
+      const groups = await Promise.all(
+        dropped.map(async (file): Promise<string[]> => {
+          const itemPath = pathForFile(file)
+          if (!itemPath) return []
+          const stat = await statPath(itemPath)
+          if (stat.isDirectory) return allowFolder ? scanDir(itemPath) : []
+          return stat.exists ? [itemPath] : []
+        })
+      )
+      commit(groups.flat(), dropped.length)
     },
-    [onFiles, multi, allowFolder]
+    [allowFolder, commit]
   )
 
   return (
     <div
       className={`dropzone${over ? ' over' : ''}`}
-      onDragOver={(e) => {
-        e.preventDefault()
+      onDragOver={(event) => {
+        event.preventDefault()
         setOver(true)
       }}
-      onDragLeave={() => setOver(false)}
-      onDrop={(e) => void handleDrop(e)}
-      onClick={async () => {
-        const paths = await pickFiles({ multi, filters: accept })
-        if (paths.length) onFiles(paths)
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false)
       }}
+      onDrop={(event) => void handleDrop(event)}
     >
-      <div className="big">📥</div>
-      <div>
-        {hint ??
-          t('Kéo-thả file/thư mục video vào đây, hoặc bấm để chọn file', 'Drag & drop video files/folders here, or click to browse')}
+      <span className="dropzone-icon"><Icon name="upload" size={28} /></span>
+      <div className="dropzone-copy">
+        <strong>{t('Thả media vào không gian này', 'Drop media into this workspace')}</strong>
+        <span>
+          {hint ??
+            t(
+              'Kéo file hoặc thư mục vào đây; hệ thống sẽ tự lọc định dạng phù hợp.',
+              'Drop files or folders here; supported formats are filtered automatically.'
+            )}
+        </span>
       </div>
-      {allowFolder && (
-        <div className="mt">
-          <button
-            className="btn btn-sm"
-            onClick={async (e) => {
-              e.stopPropagation()
-              const dir = await pickFolder()
-              if (dir) {
-                const files = await scanDir(dir)
-                if (files.length) onFiles(multi ? files : files.slice(0, 1))
-              }
-            }}
-          >
+      <div className="dropzone-actions">
+        <button className="btn btn-primary btn-sm" onClick={() => void browseFiles()}>
+          <Icon name="file-text" size={15} />
+          {multi ? t('Chọn file', 'Choose files') : t('Chọn một file', 'Choose a file')}
+        </button>
+        {allowFolder && (
+          <button className="btn btn-sm" onClick={() => void browseFolder()}>
+            <Icon name="folder" size={15} />
             {t('Chọn thư mục', 'Choose folder')}
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

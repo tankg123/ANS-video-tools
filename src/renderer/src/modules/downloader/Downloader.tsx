@@ -12,6 +12,7 @@ import { fmtBytes, secToHms } from '@shared/time'
 import { cancelTask, invoke, kvGet, kvSet, pickFiles, showInFolder } from '../../api'
 import { Field, FolderInput, NumInput, Select } from '../../components/Field'
 import { LogModal } from '../../components/LogModal'
+import { Icon } from '../../components/Icon'
 import { ProgressBar } from '../../components/ProgressBar'
 import { StatusChip } from '../../components/StatusChip'
 import { useT } from '../../i18n'
@@ -195,6 +196,7 @@ export default function Downloader(): React.JSX.Element {
   const [cookieBrowser, setCookieBrowser] = useState('chrome')
   const [logTask, setLogTask] = useState<string | null>(null)
   const [cfgLoaded, setCfgLoaded] = useState(false)
+  const activeDownloads = items.some((item) => item.status === 'queued' || item.status === 'downloading')
 
   const cookies = useMemo<CookieConfig>(
     () => ({ mode: cookieMode, file: cookieFile || undefined, browser: cookieBrowser }),
@@ -423,7 +425,8 @@ export default function Downloader(): React.JSX.Element {
                 }}
               />
               <button className="btn btn-primary" disabled={fetching || !url.trim()} onClick={() => void fetchInfo()}>
-                {fetching ? `⏳ ${t('Đang lấy...', 'Fetching...')}` : `🔎 ${t('Tải thông tin', 'Fetch info')}`}
+                {fetching ? <span className="spin" /> : <Icon name="download" size={16} />}
+                {fetching ? t('Đang lấy...', 'Fetching...') : t('Tải thông tin', 'Fetch info')}
               </button>
             </div>
           </Field>
@@ -505,10 +508,10 @@ export default function Downloader(): React.JSX.Element {
           </div>
           <div className="row mt">
             <button className="btn btn-success" disabled={busy || items.length === 0} onClick={() => void downloadAll()}>
-              ⬇️ {t('Tải tất cả', 'Download all')}
+              <Icon name="download" size={16} /> {t('Tải tất cả', 'Download all')}
             </button>
-            <button className="btn btn-danger" onClick={() => void stopAll()}>
-              ⛔ {t('Dừng tất cả', 'Stop all')}
+            <button className="btn btn-stop" disabled={!activeDownloads} onClick={() => void stopAll()}>
+              <Icon name="stop" size={16} /> {t('Dừng tất cả', 'Stop all')}
             </button>
           </div>
         </div>
@@ -520,14 +523,15 @@ export default function Downloader(): React.JSX.Element {
           {t('Danh sách Video', 'Video list')} <span className="badge">{items.length}</span>
           <span className="right">
             <button className="btn btn-sm btn-ghost" disabled={items.length === 0} onClick={() => void clearAll()}>
-              🗑 {t('Xoá tất cả', 'Clear all')}
+              <Icon name="trash" size={14} /> {t('Xoá tất cả', 'Clear all')}
             </button>
           </span>
         </div>
         {items.length === 0 ? (
           <div className="empty-state">
-            <div className="big">⬇️</div>
-            {t('Dán link rồi bấm “Tải thông tin” để thêm video', 'Paste a link and press “Fetch info” to add videos')}
+            <div className="empty-icon"><Icon name="download" size={28} /></div>
+            <strong>{t('Danh sách tải đang trống', 'Your download list is empty')}</strong>
+            <span>{t('Dán đường dẫn và chọn “Tải thông tin” để bắt đầu.', 'Paste a link and fetch its information to begin.')}</span>
           </div>
         ) : (
           <div className="table-wrap" ref={scrollRef} style={{ maxHeight: 480 }}>
@@ -536,17 +540,20 @@ export default function Downloader(): React.JSX.Element {
               {useVirtual ? (
                 <tbody style={{ position: 'relative' }}>
                   {virtualizer.getVirtualItems().length > 0 && (
-                    <tr style={{ height: virtualizer.getVirtualItems()[0].start }} aria-hidden />
+                    <tr aria-hidden><td colSpan={8} style={{ height: virtualizer.getVirtualItems()[0].start, padding: 0 }} /></tr>
                   )}
                   {virtualizer.getVirtualItems().map((v) => (
                     <Row key={items[v.index].id} item={items[v.index]} index={v.index} {...rowProps} />
                   ))}
-                  <tr
-                    style={{
-                      height: virtualizer.getTotalSize() - (virtualizer.getVirtualItems().at(-1)?.end ?? 0)
-                    }}
-                    aria-hidden
-                  />
+                  <tr aria-hidden>
+                    <td
+                      colSpan={8}
+                      style={{
+                        height: virtualizer.getTotalSize() - (virtualizer.getVirtualItems().at(-1)?.end ?? 0),
+                        padding: 0
+                      }}
+                    />
+                  </tr>
                 </tbody>
               ) : (
                 <tbody>
@@ -560,8 +567,8 @@ export default function Downloader(): React.JSX.Element {
         )}
       </div>
 
-      <div className="text-faint" style={{ fontSize: 11, textAlign: 'center', marginTop: 10 }}>
-        ⚖️{' '}
+      <div className="legal-note">
+        <Icon name="shield" size={13} />
         {t(
           'Chỉ tải nội dung bạn có quyền tải. Bạn tự chịu trách nhiệm tuân thủ điều khoản nền tảng và luật bản quyền.',
           'Only download content you have the right to download. You are responsible for complying with platform terms and copyright law.'
