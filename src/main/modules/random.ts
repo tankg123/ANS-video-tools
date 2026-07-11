@@ -105,15 +105,9 @@ async function buildSpec(
   }
 
   // ---- Chế độ re-encode: chuẩn hoá scale/pad/fps + filter concat ----
-  const noAudio = infos.filter((i) => !i.hasAudio)
-  if (noAudio.length) {
-    throw new Error(
-      `File thiếu luồng audio, không thể chuẩn hoá để ghép: ${noAudio
-        .map((i) => path.basename(i.path))
-        .join(', ')}`
-    )
-  }
-
+  // Video thiếu audio vẫn được ghép: nếu bản có video khác mang audio, chèn im lặng đúng
+  // thời lượng cho đoạn bị thiếu; nếu toàn bộ đều không có audio thì xuất video-only.
+  const hasAnyAudio = infos.some((i) => i.hasAudio)
   let biggest = infos[0]
   for (const i of infos) if (i.width * i.height > biggest.width * biggest.height) biggest = i
   const W = even(biggest.width)
@@ -124,14 +118,35 @@ async function buildSpec(
   const parts: string[] = []
   const pads: string[] = []
   for (let i = 0; i < n; i++) {
+    const info = infos[i]
     parts.push(
       `[${i}:v]setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
         `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${F},format=yuv420p[v${i}]`
     )
-    parts.push(`[${i}:a]asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`)
-    pads.push(`[v${i}][a${i}]`)
+    if (hasAnyAudio) {
+      const duration = Number.isFinite(info.durationSec) && info.durationSec > 0
+        ? Number(info.durationSec.toFixed(6))
+        : 0.001
+      if (info.hasAudio) {
+        parts.push(
+          `[${i}:a]aresample=44100:async=1:first_pts=0,` +
+            `aformat=sample_fmts=fltp:channel_layouts=stereo,apad,` +
+            `atrim=duration=${duration},asetpts=PTS-STARTPTS[a${i}]`
+        )
+      } else {
+        parts.push(
+          `anullsrc=channel_layout=stereo:sample_rate=44100,` +
+            `atrim=duration=${duration},asetpts=PTS-STARTPTS[a${i}]`
+        )
+      }
+      pads.push(`[v${i}][a${i}]`)
+    } else {
+      pads.push(`[v${i}]`)
+    }
   }
-  parts.push(`${pads.join('')}concat=n=${n}:v=1:a=1[vout][aout]`)
+  parts.push(
+    `${pads.join('')}concat=n=${n}:v=1:a=${hasAnyAudio ? 1 : 0}[vout]${hasAnyAudio ? '[aout]' : ''}`
+  )
 
   const enc = await ctx.pickEncoder('h264')
   const output = ctx.deriveOutput(first, suffix, outputDir, '.mp4')
@@ -139,20 +154,27 @@ async function buildSpec(
     ...inputs.flatMap((f) => ['-i', f]),
     '-filter_complex', parts.join(';'),
     '-map', '[vout]',
-    '-map', '[aout]',
+    ...(hasAnyAudio ? ['-map', '[aout]'] : []),
     '-c:v', enc,
     ...encoderQualityArgs(enc, 18),
-    '-c:a', 'aac',
-    '-b:a', '192k',
+    ...(hasAnyAudio ? ['-c:a', 'aac', '-b:a', '192k'] : ['-an']),
     output
   ]
   return {
     type: 'random',
-    title: `Ghép ngẫu nhiên ${n} video (chuẩn hoá ${W}×${H}@${F})${tag}`,
+    title: `Ghép ngẫu nhiên ${n} video (chuẩn hoá ${W}×${H}@${F}${hasAnyAudio ? '' : ', không audio'})${tag}`,
     args,
     durationSec: totalDur,
     outputPath: output,
-    meta: { mode: 're-encode', count: n, variant: variantIdx, targetW: W, targetH: H, targetFps: F }
+    meta: {
+      mode: 're-encode',
+      count: n,
+      variant: variantIdx,
+      targetW: W,
+      targetH: H,
+      targetFps: F,
+      audio: hasAnyAudio ? (infos.every((i) => i.hasAudio) ? 'source' : 'silence-filled') : 'none'
+    }
   }
 }
 
@@ -162,11 +184,11 @@ async function buildSpec(
  * - 'thumb' : trích 1 frame làm ảnh xem trước (JPEG data URI) cho tile.
  */
 export default function register(ctx: ModuleContext): void {
-  ctx.handle('mod:random:start', async (p: RandomStartPayload) => {
+  const startDrafts = async (p: RandomStartPayload): Promise<string[]> => {
     const jobs = Array.isArray(p?.jobs) ? p.jobs : []
     if (!jobs.length) throw new Error('Chưa có bản ghép nào — hãy "Trộn ngẫu nhiên" trước')
-    // Hai pha: probe + validate + dựng spec cho TẤT CẢ bản trước; nếu một bản lỗi (vd thiếu
-    // audio khi phải re-encode) thì reject trước khi enqueue bất kỳ task nào (all-or-nothing).
+    // Hai pha: probe + validate + dựng spec cho TẤT CẢ bản trước; nếu một bản lỗi thì reject
+    // trước khi enqueue bất kỳ task nào (all-or-nothing).
     const built = await Promise.allSettled(
       jobs.map((inputs, i) =>
         buildSpec(ctx, inputs, !!p.forceReencode, p.outputDir, jobs.length > 1 ? i + 1 : 0)
@@ -184,7 +206,27 @@ export default function register(ctx: ModuleContext): void {
       throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason))
     }
     const specs = built.map((result) => (result as PromiseFulfilledResult<FfmpegTaskOptions>).value)
+    const draftId = typeof p.draftId === 'string' ? p.draftId.trim() : ''
+    if (draftId) {
+      for (const spec of specs) spec.meta = { ...spec.meta, draftId }
+    }
     return specs.map((s) => ctx.enqueueFfmpeg(s))
+  }
+
+  // Giữ Promise đã/đang enqueue theo draft ID để hai lần bấm nhanh hoặc đổi tab trong lúc
+  // chuẩn bị task không thể tạo hai output giống nhau. Lỗi được xoá khỏi map để người dùng retry.
+  const draftStarts = new Map<string, Promise<string[]>>()
+  ctx.handle('mod:random:start', (p: RandomStartPayload) => {
+    const draftId = typeof p?.draftId === 'string' ? p.draftId.trim() : ''
+    if (!draftId || !Array.isArray(p?.jobs) || p.jobs.length !== 1) return startDrafts(p)
+    const existing = draftStarts.get(draftId)
+    if (existing) return existing
+    const pending = startDrafts(p).catch((error) => {
+      draftStarts.delete(draftId)
+      throw error
+    })
+    draftStarts.set(draftId, pending)
+    return pending
   })
 
   // ---- Thumbnail 1 frame (đồng bộ, KHÔNG qua queue) ----

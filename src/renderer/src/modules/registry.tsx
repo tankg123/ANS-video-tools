@@ -14,7 +14,7 @@ export interface ModuleDef {
 }
 
 /**
- * Registry 13 module. Lazy-load: chỉ mount UI tab đang mở.
+ * Registry 14 module. Lazy-load: chỉ mount UI tab đang mở.
  * Thứ tự = thứ tự sidebar; 'updater' luôn ghim dưới cùng.
  */
 export const MODULES: ModuleDef[] = [
@@ -73,6 +73,14 @@ export const MODULES: ModuleDef[] = [
     icon: 'green-screen',
     group: 'processing',
     Component: lazy(() => import('./green-screen/GreenScreen'))
+  },
+  {
+    key: 'photokey',
+    vi: 'Xóa Nền Ảnh',
+    en: 'Photo Background Removal',
+    icon: 'sparkles',
+    group: 'processing',
+    Component: lazy(() => import('./photokey/Photokey'))
   },
   {
     key: 'loop',

@@ -12,11 +12,14 @@ export type IconName =
   | 'file-text'
   | 'folder'
   | 'green-screen'
+  | 'grid'
   | 'inbox'
   | 'layers'
+  | 'list'
   | 'memory'
   | 'merge'
   | 'palette'
+  | 'play'
   | 'refresh'
   | 'render'
   | 'repeat'
@@ -89,6 +92,14 @@ const CONTENT: Record<IconName, ReactNode> = {
       <path d="m8 10 2.2 2.2L16 7" />
     </>
   ),
+  grid: (
+    <>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </>
+  ),
   inbox: (
     <>
       <path d="M4 4h16l2 10v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-5Z" />
@@ -99,6 +110,12 @@ const CONTENT: Record<IconName, ReactNode> = {
     <>
       <path d="m12 2 9 5-9 5-9-5 9-5Z" />
       <path d="m3 12 9 5 9-5M3 17l9 5 9-5" />
+    </>
+  ),
+  list: (
+    <>
+      <path d="M9 6h12M9 12h12M9 18h12" />
+      <path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth="3" />
     </>
   ),
   memory: (
@@ -120,6 +137,7 @@ const CONTENT: Record<IconName, ReactNode> = {
       <path d="M7.5 10h.01M9.5 6.5h.01M14 6.5h.01M17 9h.01" />
     </>
   ),
+  play: <path d="m8 5 11 7-11 7Z" />,
   refresh: (
     <>
       <path d="M20 7h-5V2" />

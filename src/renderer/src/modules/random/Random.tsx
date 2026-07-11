@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { create } from 'zustand'
 import type { MediaInfo } from '@shared/types'
 import type { RandomStartPayload } from '@shared/modules/random'
 import { fmtBytes, secToHms } from '@shared/time'
-import { invoke, invokeSilent, probe } from '../../api'
+import { cleanError, invokeSilent, kvGet, kvSet, probe } from '../../api'
 import { Check, Field, NumInput } from '../../components/Field'
 import { FileDrop } from '../../components/FileDrop'
+import { MergeDraftQueue, type MergeDraftBase } from '../../components/MergeDraftQueue'
 import { TaskTable } from '../../components/TaskTable'
+import { ViewToggle, type MediaViewMode } from '../../components/ViewToggle'
 import { useT } from '../../i18n'
 import { useSettings } from '../../store/settings'
 import { useUi } from '../../store/ui'
@@ -18,6 +21,116 @@ interface Tile {
   /** data URI ảnh xem trước; null = chưa có / lỗi */
   thumb: string | null
   thumbLoading: boolean
+}
+
+interface RandomDraft extends MergeDraftBase {
+  createdAt: number
+  forceReencode: boolean
+  outputDir: string
+  leadCount: number
+}
+
+const KV_NAMESPACE = 'random'
+const DRAFTS_KEY = 'drafts-v1'
+const VIEW_MODE_KEY = 'view-mode'
+
+function parseDrafts(value: unknown): RandomDraft[] {
+  if (!Array.isArray(value)) return []
+
+  const drafts: RandomDraft[] = []
+  const seenIds = new Set<string>()
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const candidate = item as Record<string, unknown>
+    const inputs = candidate.inputs
+    if (
+      typeof candidate.id !== 'string' ||
+      !candidate.id ||
+      seenIds.has(candidate.id) ||
+      !Array.isArray(inputs) ||
+      inputs.length < 2 ||
+      !inputs.every((path) => typeof path === 'string' && path.length > 0) ||
+      typeof candidate.createdAt !== 'number' ||
+      !Number.isFinite(candidate.createdAt) ||
+      typeof candidate.forceReencode !== 'boolean' ||
+      typeof candidate.outputDir !== 'string' ||
+      typeof candidate.leadCount !== 'number' ||
+      !Number.isFinite(candidate.leadCount)
+    ) {
+      continue
+    }
+
+    seenIds.add(candidate.id)
+    drafts.push({
+      id: candidate.id,
+      inputs: [...inputs],
+      createdAt: candidate.createdAt,
+      forceReencode: candidate.forceReencode,
+      outputDir: candidate.outputDir,
+      leadCount: Math.min(inputs.length, Math.max(0, Math.floor(candidate.leadCount)))
+    })
+  }
+  return drafts
+}
+
+interface RandomDraftQueueState {
+  drafts: RandomDraft[]
+  hydrated: boolean
+  hydrate(drafts: RandomDraft[]): void
+  commit(update: (current: RandomDraft[]) => RandomDraft[]): void
+}
+
+const useRandomDraftQueue = create<RandomDraftQueueState>((set, get) => ({
+  drafts: [],
+  hydrated: false,
+  hydrate: (drafts) => set({ drafts, hydrated: true }),
+  commit: (update) => {
+    const next = update(get().drafts)
+    set({ drafts: next })
+    void kvSet(KV_NAMESPACE, DRAFTS_KEY, next).catch(() => undefined)
+  }
+}))
+
+let randomDraftLoadPromise: Promise<void> | null = null
+
+function ensureRandomDraftsLoaded(): void {
+  if (useRandomDraftQueue.getState().hydrated || randomDraftLoadPromise) return
+  randomDraftLoadPromise = (async () => {
+    let lastError: unknown
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const saved = await invokeSilent<unknown>('core:kv:get', {
+          ns: KV_NAMESPACE,
+          key: DRAFTS_KEY,
+          def: []
+        })
+        useRandomDraftQueue.getState().hydrate(parseDrafts(saved))
+        return
+      } catch (error) {
+        lastError = error
+        if (attempt < 2) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 350 * (attempt + 1)))
+        }
+      }
+    }
+    throw lastError
+  })()
+    .catch(() => {
+      const english = useSettings.getState().settings?.language === 'en'
+      useUi.getState().pushToast(
+        'error',
+        english
+          ? 'Could not load the merge queue. Existing data was not overwritten.'
+          : 'Không thể tải hàng đợi bản ghép. Tools chưa ghi đè dữ liệu cũ.'
+      )
+    })
+    .finally(() => {
+      randomDraftLoadPromise = null
+    })
+}
+
+function createDraftId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `random-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p
@@ -70,8 +183,14 @@ export default function Random(): React.JSX.Element {
   const [outCount, setOutCount] = useState(3)
   const [variants, setVariants] = useState(1)
   const [forceReencode, setForceReencode] = useState(false)
-  const [jobs, setJobs] = useState<string[][] | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [previewJobs, setPreviewJobs] = useState<string[][] | null>(null)
+  const drafts = useRandomDraftQueue((state) => state.drafts)
+  const draftsHydrated = useRandomDraftQueue((state) => state.hydrated)
+  const commitDrafts = useRandomDraftQueue((state) => state.commit)
+  const [viewMode, setViewMode] = useState<MediaViewMode>('grid')
+  const [submittingIds, setSubmittingIds] = useState<Set<string>>(() => new Set())
+  const submittingRef = useRef(new Set<string>())
+  const viewModeEditedRef = useRef(false)
 
   const [dragOver, setDragOver] = useState<number | null>(null)
   const dragFrom = useRef<number | null>(null)
@@ -79,6 +198,30 @@ export default function Random(): React.JSX.Element {
   // Ref đọc tiles hiện tại trong event handler (dedupe khi thêm file) không cần re-bind.
   const tilesRef = useRef(tiles)
   tilesRef.current = tiles
+
+  useEffect(() => {
+    ensureRandomDraftsLoaded()
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void kvGet<unknown>(KV_NAMESPACE, VIEW_MODE_KEY, 'grid')
+      .then((saved) => {
+        if (active && !viewModeEditedRef.current && (saved === 'grid' || saved === 'list')) {
+          setViewMode(saved)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const changeViewMode = (value: MediaViewMode): void => {
+    viewModeEditedRef.current = true
+    setViewMode(value)
+    void kvSet(KV_NAMESPACE, VIEW_MODE_KEY, value).catch(() => undefined)
+  }
 
   // Limiter bền vững theo vòng đời component.
   const probeLimitRef = useRef<((fn: () => Promise<void>) => void) | null>(null)
@@ -156,7 +299,7 @@ export default function Random(): React.JSX.Element {
   // Đổi kho / thiết lập → bản trộn cũ không còn đúng, buộc trộn lại.
   const sig = tiles.map((t) => t.path).join('|') + `#${leadCount}#${outCount}#${variants}`
   useEffect(() => {
-    setJobs(null)
+    setPreviewJobs(null)
   }, [sig])
 
   // Kẹp lại số liệu khi kho video thay đổi.
@@ -202,33 +345,114 @@ export default function Random(): React.JSX.Element {
     return m
   }, [tiles])
 
-  const canRun = poolSize >= 2 && effOut >= 2 && !busy
+  const canShuffle = poolSize >= 2 && effOut >= 2
+  const canCreate = canShuffle && draftsHydrated
 
   const doShuffle = (): void => {
-    if (!canRun) return
-    setJobs(buildJobs())
+    if (!canShuffle) return
+    setPreviewJobs(buildJobs())
   }
 
-  const doGenerate = async (): Promise<void> => {
-    if (!canRun) return
-    const jb = jobs ?? buildJobs()
-    if (jb.some((j) => j.length < 2)) {
+  const createDrafts = (): void => {
+    if (!canCreate) return
+    const jobs = previewJobs ?? buildJobs()
+    if (jobs.some((job) => job.length < 2)) {
       pushToast('error', t('Mỗi bản ghép cần ít nhất 2 video', 'Each merge needs at least 2 videos'))
       return
     }
-    setBusy(true)
-    try {
-      setJobs(jb)
-      const payload: RandomStartPayload = { jobs: jb, forceReencode, outputDir }
-      const ids = await invoke<string[]>('mod:random:start', payload)
-      pushToast(
-        'success',
-        t(`Đã tạo ${ids.length} bản ghép vào hàng đợi`, `Queued ${ids.length} merge(s)`)
+    if (jobs.length === 0) {
+      pushToast('error', t('Không thể tạo thêm tổ hợp video duy nhất', 'No unique video combination is available'))
+      return
+    }
+
+    const createdAt = Date.now()
+    const nextDrafts = jobs.map(
+      (inputs, index): RandomDraft => ({
+        id: createDraftId(),
+        inputs: [...inputs],
+        createdAt: createdAt + index,
+        forceReencode,
+        outputDir,
+        leadCount: effLead
+      })
+    )
+    commitDrafts((current) => [...current, ...nextDrafts])
+    setPreviewJobs(null)
+    pushToast(
+      'success',
+      t(
+        `Đã thêm ${nextDrafts.length} bản ghép vào hàng đợi chờ`,
+        `Added ${nextDrafts.length} merge(s) to the pending queue`
       )
+    )
+  }
+
+  const runDrafts = async (requested: RandomDraft[]): Promise<void> => {
+    const selected: RandomDraft[] = []
+    for (const draft of requested) {
+      if (submittingRef.current.has(draft.id)) continue
+      submittingRef.current.add(draft.id)
+      selected.push(draft)
+    }
+    if (selected.length === 0) return
+    setSubmittingIds(new Set(submittingRef.current))
+
+    const succeeded = new Set<string>()
+    const failures: Array<{ draft: RandomDraft; error: unknown }> = []
+    let cursor = 0
+    const worker = async (): Promise<void> => {
+      while (cursor < selected.length) {
+        const draft = selected[cursor++]
+        const payload: RandomStartPayload = {
+          jobs: [[...draft.inputs]],
+          forceReencode: draft.forceReencode,
+          outputDir: draft.outputDir,
+          draftId: draft.id
+        }
+        try {
+          await invokeSilent<string[]>('mod:random:start', payload)
+          succeeded.add(draft.id)
+        } catch (error) {
+          failures.push({ draft, error })
+        }
+      }
+    }
+
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, selected.length) }, () => worker()))
+      if (succeeded.size > 0) {
+        commitDrafts((current) => current.filter((draft) => !succeeded.has(draft.id)))
+        pushToast(
+          'success',
+          t(
+            `Đã chuyển ${succeeded.size} tác vụ sang hàng đợi xử lý`,
+            `Sent ${succeeded.size} task(s) to the processing queue`
+          )
+        )
+      }
+      if (failures.length > 0) {
+        const firstError = cleanError(failures[0].error)
+        pushToast(
+          'error',
+          t(
+            `${failures.length} tác vụ chưa thể chạy: ${firstError}`,
+            `${failures.length} task(s) could not start: ${firstError}`
+          )
+        )
+      }
     } finally {
-      setBusy(false)
+      for (const draft of selected) submittingRef.current.delete(draft.id)
+      setSubmittingIds(new Set(submittingRef.current))
     }
   }
+
+  const removeDraft = (draft: RandomDraft): void => {
+    if (submittingRef.current.has(draft.id)) return
+    commitDrafts((current) => current.filter((item) => item.id !== draft.id))
+  }
+
+  const clearDrafts = (): void =>
+    commitDrafts((current) => current.filter((draft) => submittingRef.current.has(draft.id)))
 
   const totalDur = tiles.reduce((s, t) => s + (t.info?.durationSec ?? 0), 0)
 
@@ -246,14 +470,19 @@ export default function Random(): React.JSX.Element {
       <div className="card">
         <div className="card-title">
           {t('Kho video', 'Video pool')}
-          {poolSize > 0 && (
-            <span className="right text-dim" style={{ fontSize: 12 }}>
-              {poolSize} {t('video', 'videos')} · {secToHms(totalDur)}
-              <button className="btn btn-sm btn-ghost" style={{ marginLeft: 8 }} onClick={clearAll}>
-                {t('Xoá tất cả', 'Clear all')}
-              </button>
-            </span>
-          )}
+          <span className="right text-dim" style={{ fontSize: 12 }}>
+            {poolSize > 0 && (
+              <>
+                <span>
+                  {poolSize} {t('video', 'videos')} · {secToHms(totalDur)}
+                </span>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={clearAll}>
+                  {t('Xoá tất cả', 'Clear all')}
+                </button>
+              </>
+            )}
+            <ViewToggle value={viewMode} onChange={changeViewMode} />
+          </span>
         </div>
 
         {poolSize > 0 && (
@@ -264,12 +493,17 @@ export default function Random(): React.JSX.Element {
                 'Drag to reorder · the leading videos (🔒) keep this exact order, the remaining tiles (🎲) are the random pool.'
               )}
             </div>
-            <div className="rnd-grid mb">
+            <div
+              className={'rnd-grid mb' + (viewMode === 'list' ? ' list-view' : '')}
+              role="list"
+              aria-label={t('Danh sách video trong kho', 'Videos in pool')}
+            >
               {tiles.map((it, idx) => {
                 const lead = idx < effLead
                 return (
                   <div
                     key={it.path}
+                    role="listitem"
                     className={
                       'rnd-tile' +
                       (lead ? ' lead' : '') +
@@ -307,24 +541,30 @@ export default function Random(): React.JSX.Element {
                         onDragStart={(e) => e.stopPropagation()}
                       >
                         <button
+                          type="button"
                           className="btn btn-sm btn-icon"
                           disabled={idx === 0}
                           title={t('Lên', 'Up')}
+                          aria-label={t(`Đưa ${baseName(it.path)} lên`, `Move ${baseName(it.path)} up`)}
                           onClick={() => move(idx, -1)}
                         >
                           ↑
                         </button>
                         <button
+                          type="button"
                           className="btn btn-sm btn-icon"
                           disabled={idx === poolSize - 1}
                           title={t('Xuống', 'Down')}
+                          aria-label={t(`Đưa ${baseName(it.path)} xuống`, `Move ${baseName(it.path)} down`)}
                           onClick={() => move(idx, 1)}
                         >
                           ↓
                         </button>
                         <button
+                          type="button"
                           className="btn btn-sm btn-icon btn-danger"
                           title={t('Xoá', 'Remove')}
+                          aria-label={t(`Xoá ${baseName(it.path)}`, `Remove ${baseName(it.path)}`)}
                           onClick={() => removeAt(idx)}
                         >
                           🗑
@@ -333,6 +573,7 @@ export default function Random(): React.JSX.Element {
                     </div>
                     <div className="rnd-meta">
                       <div className="rnd-name ellipsis">{baseName(it.path)}</div>
+                      <div className="rnd-path ellipsis">{it.path}</div>
                       <div className="rnd-sub">
                         <span className="mono">{it.info ? secToHms(it.info.durationSec) : '…'}</span>
                         {it.info?.video && (
@@ -393,18 +634,18 @@ export default function Random(): React.JSX.Element {
           />
           <span className="hint">
             {t(
-              'Bỏ trống: cùng chuẩn → ghép copy tức thì, khác chuẩn → tự re-encode.',
-              'Off: same format → instant copy merge, mixed → auto re-encode.'
+              'Bỏ trống: cùng chuẩn → ghép copy tức thì, khác chuẩn → tự re-encode. Video thiếu audio vẫn được ghép và tự chèn im lặng khi cần.',
+              'Off: same format → instant copy merge, mixed → auto re-encode. Videos without audio are still merged, with silence added when needed.'
             )}
           </span>
         </div>
 
         <div className="row mt">
-          <button className="btn" disabled={!canRun} onClick={doShuffle}>
+          <button type="button" className="btn" disabled={!canShuffle} onClick={doShuffle}>
             🎲 {t('Trộn ngẫu nhiên', 'Shuffle')}
           </button>
-          <button className="btn btn-primary" disabled={!canRun} onClick={() => void doGenerate()}>
-            🚀{' '}
+          <button type="button" className="btn btn-primary" disabled={!canCreate} onClick={createDrafts}>
+            ＋{' '}
             {plannedVariants > 1
               ? t(`Tạo ${plannedVariants} bản ghép`, `Create ${plannedVariants} merges`)
               : t('Tạo bản ghép', 'Create merge')}
@@ -423,20 +664,26 @@ export default function Random(): React.JSX.Element {
                   )}
           </span>
         </div>
+        <div className="hint mt">
+          {t(
+            'Nút Tạo chỉ thêm bản ghép vào hàng đợi chờ; video chỉ bắt đầu xử lý khi bạn bấm Chạy.',
+            'Create only adds merges to the pending queue; processing starts when you press Run.'
+          )}
+        </div>
 
-        {jobs && jobs.length > 0 && (
+        {previewJobs && previewJobs.length > 0 && (
           <div className="rnd-preview mt">
             <div className="rnd-preview-head">
-              {t('Xem trước bản 1', 'Preview #1')} / {jobs.length}
-              {jobs.length > 1 && (
+              {t('Xem trước bản 1', 'Preview #1')} / {previewJobs.length}
+              {previewJobs.length > 1 && (
                 <span className="text-dim">
                   {' '}
-                  · {t(`+ ${jobs.length - 1} bản khác`, `+ ${jobs.length - 1} more`)}
+                  · {t(`+ ${previewJobs.length - 1} bản khác`, `+ ${previewJobs.length - 1} more`)}
                 </span>
               )}
             </div>
             <div className="rnd-strip">
-              {jobs[0].map((p, i) => {
+              {previewJobs[0].map((p, i) => {
                 const tile = thumbByPath.get(p)
                 const lead = i < effLead
                 return (
@@ -455,6 +702,43 @@ export default function Random(): React.JSX.Element {
           </div>
         )}
       </div>
+
+      <MergeDraftQueue
+        drafts={drafts}
+        submittingIds={submittingIds}
+        mediaWord={['video', 'video']}
+        renderMedia={(path, index, draft) => {
+          const tile = thumbByPath.get(path)
+          const lead = index < draft.leadCount
+          return (
+            <div className="rnd-draft-thumb" title={path}>
+              {tile?.thumb ? <img src={tile.thumb} alt="" /> : <span className="rnd-thumb-ph">🎬</span>}
+              <span className={'rnd-strip-badge ' + (lead ? 'lead' : 'rand')}>
+                {lead ? `🔒${index + 1}` : '🎲'}
+              </span>
+            </div>
+          )
+        }}
+        renderDetails={(draft) => (
+          <div className="rnd-draft-details">
+            <span>
+              {t('Video đầu cố định', 'Fixed leading')}: {draft.leadCount}
+            </span>
+            <span>
+              {draft.forceReencode
+                ? t('Chuẩn hoá bật', 'Normalize on')
+                : t('Tự chọn chế độ ghép', 'Auto merge mode')}
+            </span>
+            <span className="ellipsis" title={draft.outputDir || t('Thư mục đầu ra mặc định', 'Default output folder')}>
+              {t('Đầu ra', 'Output')}: {draft.outputDir || t('Mặc định', 'Default')}
+            </span>
+          </div>
+        )}
+        onRun={(draft) => void runDrafts([draft])}
+        onRemove={removeDraft}
+        onRunAll={() => void runDrafts(drafts)}
+        onClear={clearDrafts}
+      />
 
       <TaskTable types={['random']} />
     </div>

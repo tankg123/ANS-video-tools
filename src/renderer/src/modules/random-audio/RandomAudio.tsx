@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { create } from 'zustand'
 import type { MediaInfo } from '@shared/types'
 import type { RandomAudioFormat, RandomAudioStartPayload } from '@shared/modules/random-audio'
 import { fmtBytes, secToHms } from '@shared/time'
-import { invoke, invokeSilent, kvGet, kvSet, pathForFile, pickFiles, pickFolder, probe, statPath } from '../../api'
+import { cleanError, invokeSilent, kvGet, kvSet, pathForFile, pickFiles, pickFolder, probe, statPath } from '../../api'
 import { Check, Field, FolderInput, NumInput, Select } from '../../components/Field'
+import { MergeDraftQueue, type MergeDraftBase } from '../../components/MergeDraftQueue'
 import { TaskTable } from '../../components/TaskTable'
+import { ViewToggle, type MediaViewMode } from '../../components/ViewToggle'
 import { useT } from '../../i18n'
 import { useSettings } from '../../store/settings'
 import { useUi } from '../../store/ui'
@@ -19,6 +22,14 @@ interface Tile {
   waveLoading: boolean
 }
 
+interface RandomAudioDraft extends MergeDraftBase {
+  createdAt: number
+  forceReencode: boolean
+  outputDir: string
+  format: RandomAudioFormat
+  leadCount: number
+}
+
 const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p
 
 const AUDIO_EXTS = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'aif', 'ac3', 'mka']
@@ -26,7 +37,100 @@ const AUDIO_FILTERS = [
   { name: 'Âm thanh', extensions: AUDIO_EXTS },
   { name: 'Tất cả file', extensions: ['*'] }
 ]
+const AUDIO_KV_NAMESPACE = 'random-audio'
+const AUDIO_DRAFTS_KEY = 'drafts-v1'
 const AUDIO_EXT_RE = new RegExp(`\\.(${AUDIO_EXTS.join('|')})$`, 'i')
+
+function isRandomAudioDraft(value: unknown): value is RandomAudioDraft {
+  if (!value || typeof value !== 'object') return false
+  const draft = value as Record<string, unknown>
+  return (
+    typeof draft.id === 'string' &&
+    draft.id.length > 0 &&
+    Array.isArray(draft.inputs) &&
+    draft.inputs.length >= 2 &&
+    draft.inputs.every((input) => typeof input === 'string' && input.length > 0) &&
+    typeof draft.createdAt === 'number' &&
+    Number.isFinite(draft.createdAt) &&
+    typeof draft.forceReencode === 'boolean' &&
+    typeof draft.outputDir === 'string' &&
+    (draft.format === 'mp3' || draft.format === 'wav') &&
+    typeof draft.leadCount === 'number' &&
+    Number.isInteger(draft.leadCount) &&
+    draft.leadCount >= 0
+  )
+}
+
+function parseRandomAudioDrafts(value: unknown): RandomAudioDraft[] {
+  if (!Array.isArray(value)) return []
+  const seenIds = new Set<string>()
+  return value.filter((draft): draft is RandomAudioDraft => {
+    if (!isRandomAudioDraft(draft) || seenIds.has(draft.id)) return false
+    seenIds.add(draft.id)
+    return true
+  })
+}
+
+interface RandomAudioDraftQueueState {
+  drafts: RandomAudioDraft[]
+  hydrated: boolean
+  hydrate(drafts: RandomAudioDraft[]): void
+  commit(update: (current: RandomAudioDraft[]) => RandomAudioDraft[]): void
+}
+
+const useRandomAudioDraftQueue = create<RandomAudioDraftQueueState>((set, get) => ({
+  drafts: [],
+  hydrated: false,
+  hydrate: (drafts) => set({ drafts, hydrated: true }),
+  commit: (update) => {
+    const next = update(get().drafts)
+    set({ drafts: next })
+    void kvSet(AUDIO_KV_NAMESPACE, AUDIO_DRAFTS_KEY, next).catch(() => undefined)
+  }
+}))
+
+let randomAudioDraftLoadPromise: Promise<void> | null = null
+
+function ensureRandomAudioDraftsLoaded(): void {
+  if (useRandomAudioDraftQueue.getState().hydrated || randomAudioDraftLoadPromise) return
+  randomAudioDraftLoadPromise = (async () => {
+    let lastError: unknown
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const saved = await invokeSilent<unknown>('core:kv:get', {
+          ns: AUDIO_KV_NAMESPACE,
+          key: AUDIO_DRAFTS_KEY,
+          def: []
+        })
+        useRandomAudioDraftQueue.getState().hydrate(parseRandomAudioDrafts(saved))
+        return
+      } catch (error) {
+        lastError = error
+        if (attempt < 2) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 350 * (attempt + 1)))
+        }
+      }
+    }
+    throw lastError
+  })()
+    .catch(() => {
+      const english = useSettings.getState().settings?.language === 'en'
+      useUi.getState().pushToast(
+        'error',
+        english
+          ? 'Could not load the audio queue. Existing data was not overwritten.'
+          : 'Không thể tải hàng đợi âm thanh. Tools chưa ghi đè dữ liệu cũ.'
+      )
+    })
+    .finally(() => {
+      randomAudioDraftLoadPromise = null
+    })
+}
+
+function draftId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID()
+  return `random-audio-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 /** Giới hạn số tác vụ async chạy song song (tránh spawn hàng trăm ffprobe/ffmpeg cùng lúc). */
 function makeLimiter(limit: number): (fn: () => Promise<void>) => void {
@@ -78,26 +182,62 @@ export default function RandomAudio(): React.JSX.Element {
   const [variants, setVariants] = useState(1)
   const [forceReencode, setForceReencode] = useState(false)
   const [format, setFormat] = useState<RandomAudioFormat>('mp3')
-  const [jobs, setJobs] = useState<string[][] | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [previewJobs, setPreviewJobs] = useState<string[][] | null>(null)
+  const drafts = useRandomAudioDraftQueue((state) => state.drafts)
+  const draftsHydrated = useRandomAudioDraftQueue((state) => state.hydrated)
+  const commitDrafts = useRandomAudioDraftQueue((state) => state.commit)
+  const [submittingIds, setSubmittingIds] = useState<ReadonlySet<string>>(new Set())
+  const [viewMode, setViewMode] = useState<MediaViewMode>('grid')
   const [dropOver, setDropOver] = useState(false)
 
   const [dragOver, setDragOver] = useState<number | null>(null)
   const dragFrom = useRef<number | null>(null)
+  const submittingRef = useRef(new Set<string>())
+  const viewModeEditedRef = useRef(false)
+  const outputDirEditedRef = useRef(false)
 
   useEffect(() => {
     let alive = true
-    void kvGet<string>('random-audio', 'outputDir', defaultOutputDir).then((saved) => {
-      if (alive) setOutputDir(saved)
-    })
+    void kvGet<string>('random-audio', 'outputDir', defaultOutputDir)
+      .then((saved) => {
+        if (alive && !outputDirEditedRef.current) setOutputDir(saved)
+      })
+      .catch(() => undefined)
     return () => {
       alive = false
     }
   }, [defaultOutputDir])
 
+  useEffect(() => {
+    ensureRandomAudioDraftsLoaded()
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    void invokeSilent<unknown>('core:kv:get', {
+      ns: 'random-audio',
+      key: 'view-mode',
+      def: 'grid'
+    })
+      .then((savedView) => {
+        if (alive && !viewModeEditedRef.current) setViewMode(savedView === 'list' ? 'list' : 'grid')
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+
   const changeOutputDir = (value: string): void => {
+    outputDirEditedRef.current = true
     setOutputDir(value)
-    void kvSet('random-audio', 'outputDir', value)
+    void kvSet('random-audio', 'outputDir', value).catch(() => undefined)
+  }
+
+  const changeViewMode = (value: MediaViewMode): void => {
+    viewModeEditedRef.current = true
+    setViewMode(value)
+    void kvSet('random-audio', 'view-mode', value).catch(() => undefined)
   }
 
   // Ref đọc tiles hiện tại trong event handler (dedupe khi thêm file) không cần re-bind.
@@ -209,7 +349,7 @@ export default function RandomAudio(): React.JSX.Element {
   // Đổi kho / thiết lập → bản trộn cũ không còn đúng, buộc trộn lại.
   const sig = tiles.map((t) => t.path).join('|') + `#${leadCount}#${outCount}#${variants}`
   useEffect(() => {
-    setJobs(null)
+    setPreviewJobs(null)
   }, [sig])
 
   // Kẹp lại số liệu khi kho thay đổi.
@@ -252,32 +392,136 @@ export default function RandomAudio(): React.JSX.Element {
     return m
   }, [tiles])
 
-  const canRun = poolSize >= 2 && effOut >= 2 && !busy
+  const canShuffle = poolSize >= 2 && effOut >= 2
+  const canCreate = draftsHydrated && canShuffle
 
   const doShuffle = (): void => {
-    if (!canRun) return
-    setJobs(buildJobs())
+    if (!canShuffle) return
+    setPreviewJobs(buildJobs())
   }
 
-  const doGenerate = async (): Promise<void> => {
-    if (!canRun) return
-    const jb = jobs ?? buildJobs()
+  const createDrafts = (): void => {
+    if (!canCreate) return
+    const jb = previewJobs ?? buildJobs()
     if (jb.some((j) => j.length < 2)) {
       pushToast('error', t('Mỗi bản ghép cần ít nhất 2 file', 'Each merge needs at least 2 files'))
       return
     }
-    setBusy(true)
-    try {
-      setJobs(jb)
-      const payload: RandomAudioStartPayload = { jobs: jb, forceReencode, format, outputDir }
-      const ids = await invoke<string[]>('mod:random-audio:start', payload)
-      pushToast(
-        'success',
-        t(`Đã tạo ${ids.length} bản ghép vào hàng đợi`, `Queued ${ids.length} merge(s)`)
-      )
-    } finally {
-      setBusy(false)
+    if (jb.length === 0) {
+      pushToast('error', t('Không thể tạo thêm tổ hợp âm thanh duy nhất', 'No unique audio combination is available'))
+      return
     }
+    const createdAt = Date.now()
+    const nextDrafts = jb.map(
+      (inputs, index): RandomAudioDraft => ({
+        id: draftId(),
+        inputs: [...inputs],
+        createdAt: createdAt + index,
+        forceReencode,
+        outputDir,
+        format,
+        leadCount: effLead
+      })
+    )
+    commitDrafts((prev) => [...prev, ...nextDrafts])
+    setPreviewJobs(null)
+    pushToast(
+      'success',
+      t(
+        `Đã thêm ${nextDrafts.length} bản ghép vào hàng đợi (chưa chạy)`,
+        `Added ${nextDrafts.length} merge(s) to the queue (not started)`
+      )
+    )
+  }
+
+  const claimDrafts = (items: RandomAudioDraft[]): RandomAudioDraft[] => {
+    const claimed = items.filter((draft) => !submittingRef.current.has(draft.id))
+    if (!claimed.length) return []
+    for (const draft of claimed) submittingRef.current.add(draft.id)
+    setSubmittingIds(new Set(submittingRef.current))
+    return claimed
+  }
+
+  const releaseDrafts = (items: RandomAudioDraft[]): void => {
+    for (const draft of items) submittingRef.current.delete(draft.id)
+    setSubmittingIds(new Set(submittingRef.current))
+  }
+
+  const enqueueDraft = async (draft: RandomAudioDraft): Promise<void> => {
+    const payload: RandomAudioStartPayload = {
+      jobs: [[...draft.inputs]],
+      forceReencode: draft.forceReencode,
+      format: draft.format,
+      outputDir: draft.outputDir,
+      draftId: draft.id
+    }
+    await invokeSilent<string[]>('mod:random-audio:start', payload)
+  }
+
+  const runDraft = async (draft: RandomAudioDraft): Promise<void> => {
+    const [claimed] = claimDrafts([draft])
+    if (!claimed) return
+    try {
+      await enqueueDraft(claimed)
+      commitDrafts((prev) => prev.filter((item) => item.id !== claimed.id))
+      pushToast('success', t('Đã chuyển tác vụ sang hàng đợi xử lý', 'Task sent to the processing queue'))
+    } catch (error) {
+      pushToast('error', cleanError(error))
+    } finally {
+      releaseDrafts([claimed])
+    }
+  }
+
+  const runAllDrafts = async (): Promise<void> => {
+    const claimed = claimDrafts(useRandomAudioDraftQueue.getState().drafts)
+    if (!claimed.length) return
+
+    let cursor = 0
+    const succeeded: string[] = []
+    const failures: string[] = []
+    const worker = async (): Promise<void> => {
+      while (cursor < claimed.length) {
+        const draft = claimed[cursor++]
+        try {
+          await enqueueDraft(draft)
+          succeeded.push(draft.id)
+        } catch (error) {
+          failures.push(cleanError(error))
+        }
+      }
+    }
+
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, claimed.length) }, () => worker()))
+      if (succeeded.length) {
+        const completed = new Set(succeeded)
+        commitDrafts((prev) => prev.filter((draft) => !completed.has(draft.id)))
+        pushToast(
+          'success',
+          t(
+            `Đã chuyển ${succeeded.length} tác vụ sang hàng đợi xử lý`,
+            `Sent ${succeeded.length} task(s) to the processing queue`
+          )
+        )
+      }
+      if (failures.length) {
+        const firstError = failures[0]
+        pushToast(
+          'error',
+          t(
+            `${failures.length} tác vụ chưa thể chạy: ${firstError}`,
+            `${failures.length} task(s) could not start: ${firstError}`
+          )
+        )
+      }
+    } finally {
+      releaseDrafts(claimed)
+    }
+  }
+
+  const removeDraft = (draft: RandomAudioDraft): void => {
+    if (submittingRef.current.has(draft.id)) return
+    commitDrafts((prev) => prev.filter((item) => item.id !== draft.id))
   }
 
   const fmtAudioSub = (info: MediaInfo | null): React.JSX.Element => (
@@ -309,15 +553,22 @@ export default function RandomAudio(): React.JSX.Element {
       {/* ---- Kho âm thanh ---- */}
       <div className="card">
         <div className="card-title">
-          {t('Kho âm thanh', 'Audio pool')}
-          {poolSize > 0 && (
-            <span className="right text-dim" style={{ fontSize: 12 }}>
-              {poolSize} {t('file', 'files')} · {secToHms(totalDur)}
-              <button className="btn btn-sm btn-ghost" style={{ marginLeft: 8 }} onClick={clearAll}>
-                {t('Xoá tất cả', 'Clear all')}
-              </button>
-            </span>
-          )}
+          <span>{t('Kho âm thanh', 'Audio pool')}</span>
+          <span className="right rna-pool-tools">
+            {poolSize > 0 && (
+              <span className="text-dim rna-pool-summary">
+                {poolSize} {t('file', 'files')} · {secToHms(totalDur)}
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  onClick={clearAll}
+                >
+                  {t('Xoá tất cả', 'Clear all')}
+                </button>
+              </span>
+            )}
+            <ViewToggle value={viewMode} onChange={changeViewMode} />
+          </span>
         </div>
 
         {poolSize > 0 && (
@@ -328,7 +579,11 @@ export default function RandomAudio(): React.JSX.Element {
                 'Drag to reorder · the leading files (🔒) keep this exact order, the remaining tiles (🎲) are the random pool.'
               )}
             </div>
-            <div className="rna-grid mb">
+            <div
+              className={`rna-grid mb${viewMode === 'list' ? ' list-view' : ''}`}
+              role="list"
+              aria-label={t('Danh sách kho âm thanh', 'Audio library items')}
+            >
               {tiles.map((it, idx) => {
                 const lead = idx < effLead
                 return (
@@ -340,6 +595,7 @@ export default function RandomAudio(): React.JSX.Element {
                       (dragOver === idx ? ' dragover' : '') +
                       (dragFrom.current === idx ? ' dragging' : '')
                     }
+                    role="listitem"
                     draggable
                     onDragStart={() => {
                       dragFrom.current = idx
@@ -371,24 +627,30 @@ export default function RandomAudio(): React.JSX.Element {
                         onDragStart={(e) => e.stopPropagation()}
                       >
                         <button
+                          type="button"
                           className="btn btn-sm btn-icon"
                           disabled={idx === 0}
                           title={t('Lên', 'Up')}
+                          aria-label={t(`Đưa ${baseName(it.path)} lên`, `Move ${baseName(it.path)} up`)}
                           onClick={() => move(idx, -1)}
                         >
                           ↑
                         </button>
                         <button
+                          type="button"
                           className="btn btn-sm btn-icon"
                           disabled={idx === poolSize - 1}
                           title={t('Xuống', 'Down')}
+                          aria-label={t(`Đưa ${baseName(it.path)} xuống`, `Move ${baseName(it.path)} down`)}
                           onClick={() => move(idx, 1)}
                         >
                           ↓
                         </button>
                         <button
+                          type="button"
                           className="btn btn-sm btn-icon btn-danger"
                           title={t('Xoá', 'Remove')}
+                          aria-label={t(`Xoá ${baseName(it.path)}`, `Remove ${baseName(it.path)}`)}
                           onClick={() => removeAt(idx)}
                         >
                           🗑
@@ -397,6 +659,7 @@ export default function RandomAudio(): React.JSX.Element {
                     </div>
                     <div className="rna-meta">
                       <div className="rna-name ellipsis">{baseName(it.path)}</div>
+                      <div className="rna-path ellipsis">{it.path}</div>
                       {fmtAudioSub(it.info)}
                     </div>
                   </div>
@@ -425,6 +688,7 @@ export default function RandomAudio(): React.JSX.Element {
           </div>
           <div className="mt">
             <button
+              type="button"
               className="btn btn-sm"
               onClick={(e) => {
                 e.stopPropagation()
@@ -500,11 +764,11 @@ export default function RandomAudio(): React.JSX.Element {
         </div>
 
         <div className="row mt">
-          <button className="btn" disabled={!canRun} onClick={doShuffle}>
+          <button type="button" className="btn" disabled={!canShuffle} onClick={doShuffle}>
             🎲 {t('Trộn ngẫu nhiên', 'Shuffle')}
           </button>
-          <button className="btn btn-primary" disabled={!canRun} onClick={() => void doGenerate()}>
-            🚀{' '}
+          <button type="button" className="btn btn-primary" disabled={!canCreate} onClick={createDrafts}>
+            ＋{' '}
             {plannedVariants > 1
               ? t(`Tạo ${plannedVariants} bản ghép`, `Create ${plannedVariants} merges`)
               : t('Tạo bản ghép', 'Create merge')}
@@ -522,21 +786,26 @@ export default function RandomAudio(): React.JSX.Element {
                     `${effLead} leading (fixed) + ${randomFill} random = ${effOut} files/merge`
                   )}
           </span>
+          {canCreate && (
+            <span className="hint">
+              {t('Chỉ thêm vào hàng đợi, chưa bắt đầu xử lý.', 'Adds to the queue without starting it.')}
+            </span>
+          )}
         </div>
 
-        {jobs && jobs.length > 0 && (
+        {previewJobs && previewJobs.length > 0 && (
           <div className="rna-preview mt">
             <div className="rna-preview-head">
-              {t('Xem trước bản 1', 'Preview #1')} / {jobs.length}
-              {jobs.length > 1 && (
+              {t('Xem trước bản 1', 'Preview #1')} / {previewJobs.length}
+              {previewJobs.length > 1 && (
                 <span className="text-dim">
                   {' '}
-                  · {t(`+ ${jobs.length - 1} bản khác`, `+ ${jobs.length - 1} more`)}
+                  · {t(`+ ${previewJobs.length - 1} bản khác`, `+ ${previewJobs.length - 1} more`)}
                 </span>
               )}
             </div>
             <div className="rna-strip">
-              {jobs[0].map((p, i) => {
+              {previewJobs[0].map((p, i) => {
                 const tile = tileByPath.get(p)
                 const lead = i < effLead
                 return (
@@ -555,6 +824,45 @@ export default function RandomAudio(): React.JSX.Element {
           </div>
         )}
       </div>
+
+      <MergeDraftQueue
+        drafts={drafts}
+        submittingIds={submittingIds}
+        mediaWord={['file âm thanh', 'audio file']}
+        renderMedia={(path, index, draft) => {
+          const tile = tileByPath.get(path)
+          const lead = index < draft.leadCount
+          return (
+            <div className="rna-draft-wave">
+              {tile?.wave ? (
+                <img src={tile.wave} alt="" draggable={false} />
+              ) : (
+                <span className="rna-wave-ph">🎵</span>
+              )}
+              <span className={'rna-strip-badge ' + (lead ? 'lead' : 'rand')}>
+                {lead ? `🔒${index + 1}` : '🎲'}
+              </span>
+            </div>
+          )
+        }}
+        renderDetails={(draft) => (
+          <div className="rna-draft-options">
+            <span className="mono">{draft.format.toUpperCase()}</span>
+            <span>
+              {draft.forceReencode
+                ? t('Chuẩn hoá', 'Normalize')
+                : t('Tự chọn copy/re-encode', 'Auto copy/re-encode')}
+            </span>
+            <span className="ellipsis" title={draft.outputDir || undefined}>
+              {draft.outputDir || t('Cạnh file nguồn', 'Next to source')}
+            </span>
+          </div>
+        )}
+        onRun={(draft) => void runDraft(draft)}
+        onRemove={removeDraft}
+        onRunAll={() => void runAllDrafts()}
+        onClear={() => commitDrafts(() => [])}
+      />
 
       <TaskTable types={['random-audio']} />
     </div>

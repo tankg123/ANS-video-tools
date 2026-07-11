@@ -1,0 +1,223 @@
+.photokey-mode {
+  display: inline-flex;
+  width: min(100%, 520px);
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(8, 13, 21, 0.55);
+}
+
+.photokey-mode button {
+  min-height: 36px;
+  flex: 1;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 3px);
+  color: var(--text-faint);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.photokey-mode button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.photokey-mode button.active {
+  color: var(--accent-contrast);
+  background: var(--accent-grad);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.photokey-files {
+  max-height: 230px;
+}
+
+.photokey-files th:first-child,
+.photokey-files td:first-child {
+  width: 48px;
+}
+
+.photokey-files th:last-child,
+.photokey-files td:last-child {
+  width: 48px;
+}
+
+.photokey-files td:nth-child(2) {
+  max-width: 260px;
+}
+
+.photokey-files td:nth-child(3) {
+  max-width: 440px;
+}
+
+.photokey-first-badge {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.photokey-folder-value {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.photokey-folder-drop {
+  display: flex;
+  min-height: 116px;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 24px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: rgba(9, 15, 24, 0.45);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.photokey-folder-drop.over,
+.photokey-folder-drop:hover {
+  border-color: rgba(var(--accent-rgb), 0.65);
+  background: rgba(var(--accent-rgb), 0.07);
+}
+
+.photokey-folder-drop-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.photokey-folder-drop-copy strong {
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.photokey-folder-drop-copy span {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.photokey-subsection-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 14px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border-soft);
+  color: #c1ccdc;
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.photokey-subsection-head .btn {
+  margin-left: auto;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.photokey-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.photokey-validation {
+  margin-top: -2px;
+  font-size: 11.5px;
+}
+
+.photokey-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.photokey-preview-pane {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: rgba(8, 13, 21, 0.65);
+}
+
+.photokey-preview-title {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 760;
+  letter-spacing: 0.14em;
+  text-align: center;
+}
+
+.photokey-preview-canvas {
+  display: grid;
+  min-height: 290px;
+  max-height: 470px;
+  place-items: center;
+  overflow: hidden;
+  padding: 14px;
+  background: #0b111b;
+}
+
+.photokey-preview-canvas.checker {
+  background:
+    repeating-conic-gradient(#d8dce2 0 25%, #f0f2f5 0 50%) 0 0 / 22px 22px;
+}
+
+.photokey-preview-canvas img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 440px;
+  object-fit: contain;
+}
+
+.photokey-preview-empty {
+  display: flex;
+  max-width: 320px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 18px;
+  border-radius: var(--radius-sm);
+  color: #7d8999;
+  background: rgba(10, 16, 25, 0.74);
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (max-width: 1050px) {
+  .photokey-advanced-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .photokey-preview-canvas {
+    min-height: 230px;
+  }
+}
+
+@media (max-width: 760px) {
+  .photokey-advanced-grid,
+  .photokey-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .photokey-folder-drop {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

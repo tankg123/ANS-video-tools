@@ -180,7 +180,7 @@ async function buildSpec(
  * - 'scanDir' : quét thư mục lấy danh sách file âm thanh (core:scanDir chỉ quét video).
  */
 export default function register(ctx: ModuleContext): void {
-  ctx.handle('mod:random-audio:start', async (p: RandomAudioStartPayload) => {
+  const startDrafts = async (p: RandomAudioStartPayload): Promise<string[]> => {
     const jobs = Array.isArray(p?.jobs) ? p.jobs : []
     if (!jobs.length) throw new Error('Chưa có bản ghép nào — hãy "Trộn ngẫu nhiên" trước')
     const format: RandomAudioFormat = p.format === 'wav' ? 'wav' : 'mp3'
@@ -211,7 +211,27 @@ export default function register(ctx: ModuleContext): void {
       throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason))
     }
     const specs = built.map((result) => (result as PromiseFulfilledResult<FfmpegTaskOptions>).value)
+    const draftId = typeof p.draftId === 'string' ? p.draftId.trim() : ''
+    if (draftId) {
+      for (const spec of specs) spec.meta = { ...spec.meta, draftId }
+    }
     return specs.map((s) => ctx.enqueueFfmpeg(s))
+  }
+
+  // Idempotency trong vòng đời ứng dụng: một draft chỉ được enqueue một lần, kể cả khi
+  // renderer đổi module/remount trong lúc ffprobe đang chuẩn bị task. Draft lỗi vẫn được retry.
+  const draftStarts = new Map<string, Promise<string[]>>()
+  ctx.handle('mod:random-audio:start', (p: RandomAudioStartPayload) => {
+    const draftId = typeof p?.draftId === 'string' ? p.draftId.trim() : ''
+    if (!draftId || !Array.isArray(p?.jobs) || p.jobs.length !== 1) return startDrafts(p)
+    const existing = draftStarts.get(draftId)
+    if (existing) return existing
+    const pending = startDrafts(p).catch((error) => {
+      draftStarts.delete(draftId)
+      throw error
+    })
+    draftStarts.set(draftId, pending)
+    return pending
   })
 
   // ---- Quét thư mục lấy file âm thanh (đồng bộ) ----

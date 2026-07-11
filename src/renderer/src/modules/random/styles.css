@@ -105,6 +105,59 @@
   color: var(--text-dim);
 }
 
+.rnd-path {
+  display: none;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+/* Chế độ danh sách: ưu tiên tên, đường dẫn và thông số kỹ thuật. */
+.rnd-grid.list-view {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.rnd-grid.list-view .rnd-tile {
+  display: grid;
+  min-height: 104px;
+  grid-template-columns: minmax(176px, 220px) minmax(0, 1fr);
+}
+
+.rnd-grid.list-view .rnd-thumb-wrap {
+  min-height: 102px;
+  aspect-ratio: 16 / 9;
+  border-right: 1px solid var(--border-soft);
+}
+
+.rnd-grid.list-view .rnd-meta {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 13px 16px;
+}
+
+.rnd-grid.list-view .rnd-name {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.rnd-grid.list-view .rnd-path {
+  display: block;
+}
+
+.rnd-grid.list-view .rnd-sub {
+  margin-top: 0;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.rnd-grid.list-view .rnd-tile-actions {
+  opacity: 1;
+}
+
 /* ---- Dải xem trước ---- */
 .rnd-preview {
   border-top: 1px solid var(--border-soft);
@@ -160,4 +213,57 @@
   font-size: 10.5px;
   color: var(--text-dim);
   max-width: 100%;
+}
+
+/* Media snapshot bên trong hàng đợi nháp. */
+.rnd-draft-thumb {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: var(--bg-1);
+}
+
+.rnd-draft-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.rnd-draft-thumb .rnd-strip-badge {
+  right: 4px;
+  left: auto;
+}
+
+.rnd-draft-details {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.rnd-draft-details > span {
+  min-width: 0;
+  max-width: min(100%, 420px);
+}
+
+@media (max-width: 720px) {
+  .rnd-grid.list-view .rnd-tile {
+    grid-template-columns: 132px minmax(0, 1fr);
+  }
+
+  .rnd-grid.list-view .rnd-thumb-wrap {
+    min-height: 88px;
+  }
+
+  .rnd-grid.list-view .rnd-meta {
+    padding: 10px 12px;
+  }
 }

@@ -16,6 +16,8 @@ export interface RandomStartPayload {
   forceReencode: boolean
   /** thư mục xuất; rỗng = cạnh file đầu tiên của mỗi bản */
   outputDir?: string
+  /** ID ổn định của draft khi chạy từng bản; backend dùng để chống enqueue trùng trong cùng phiên. */
+  draftId?: string
 }
 
 /** Trả về danh sách taskId (mỗi bản ghép 1 task). */

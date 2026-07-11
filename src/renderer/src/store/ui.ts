@@ -9,6 +9,7 @@ export type ModuleKey =
   | 'split'
   | 'trim'
   | 'green-screen'
+  | 'photokey'
   | 'loop'
   | 'concat'
   | 'random'
@@ -25,6 +26,7 @@ const VALID_MODULES = new Set<ModuleKey>([
   'split',
   'trim',
   'green-screen',
+  'photokey',
   'loop',
   'concat',
   'random',

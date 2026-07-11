@@ -6,6 +6,7 @@ import registerIntroOutroLogo from './intro-outro-logo'
 import registerSplit from './split'
 import registerTrim from './trim'
 import registerGreenScreen from './green-screen'
+import registerPhotokey from './photokey'
 import registerLoop from './loop'
 import registerConcat from './concat'
 import registerRandom from './random'
@@ -23,6 +24,7 @@ export function registerAllModules(ctx: ModuleContext): void {
     ['split', registerSplit],
     ['trim', registerTrim],
     ['green-screen', registerGreenScreen],
+    ['photokey', registerPhotokey],
     ['loop', registerLoop],
     ['concat', registerConcat],
     ['random', registerRandom],

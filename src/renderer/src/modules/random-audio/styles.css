@@ -12,6 +12,17 @@
   gap: 10px;
 }
 
+.rna-pool-tools,
+.rna-pool-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rna-pool-summary {
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .rna-tile {
   position: relative;
   border: 1px solid var(--border-soft);
@@ -90,11 +101,18 @@
 
 .rna-meta {
   padding: 7px 8px 8px;
+  min-width: 0;
 }
 .rna-name {
   font-size: 11.5px;
   font-weight: 600;
   max-width: 100%;
+}
+.rna-path {
+  display: none;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--text-dim);
 }
 .rna-sub {
   margin-top: 3px;
@@ -103,6 +121,39 @@
   flex-wrap: wrap;
   font-size: 10.5px;
   color: var(--text-dim);
+}
+
+/* ---- Hiển thị dạng danh sách ---- */
+.rna-grid.list-view {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+.rna-grid.list-view .rna-tile {
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  min-height: 82px;
+}
+.rna-grid.list-view .rna-wave-wrap {
+  height: 100%;
+  min-height: 82px;
+  border-right: 1px solid var(--border-soft);
+}
+.rna-grid.list-view .rna-meta {
+  align-self: center;
+  padding: 11px 14px;
+}
+.rna-grid.list-view .rna-name {
+  font-size: 12.5px;
+}
+.rna-grid.list-view .rna-path {
+  display: block;
+}
+.rna-grid.list-view .rna-sub {
+  margin-top: 7px;
+  gap: 10px;
+}
+.rna-grid.list-view .rna-tile-actions {
+  opacity: 1;
 }
 
 /* ---- Dải xem trước ---- */
@@ -160,4 +211,58 @@
   font-size: 10.5px;
   color: var(--text-dim);
   max-width: 100%;
+}
+
+/* ---- Nội dung riêng của job âm thanh trong hàng đợi nháp ---- */
+.rna-draft-wave {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg-1);
+}
+.rna-draft-wave img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.rna-draft-wave .rna-strip-badge {
+  right: 4px;
+  left: auto;
+}
+.rna-draft-options {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
+  color: var(--text-dim);
+}
+.rna-draft-options > span:last-child {
+  min-width: 0;
+  margin-left: auto;
+  max-width: min(52vw, 520px);
+}
+
+@media (max-width: 720px) {
+  .rna-pool-tools {
+    align-items: flex-end;
+    flex-direction: column-reverse;
+  }
+  .rna-grid.list-view .rna-tile {
+    grid-template-columns: minmax(130px, 36%) minmax(0, 1fr);
+  }
+  .rna-draft-options {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .rna-draft-options > span:last-child {
+    margin-left: 0;
+    max-width: 100%;
+  }
 }

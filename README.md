@@ -3,7 +3,7 @@
 Desktop app xử lý video đa năng (All-In-One) cho Windows — Electron + React + TypeScript, engine **FFmpeg** + **yt-dlp**.
 Xây theo đặc tả `SPEC-video-toolkit-desktop-app.md`.
 
-## Tính năng (13 module)
+## Tính năng (14 module)
 
 1. **Render H264/H265** — hàng loạt, tự dò NVENC/QSV/AMF
 2. **Xóa Audio khỏi Video** — xử lý hàng loạt, chọn thư mục xuất, stream-copy không giảm chất lượng
@@ -12,12 +12,13 @@ Xây theo đặc tả `SPEC-video-toolkit-desktop-app.md`.
 5. **Cắt chia nhỏ Video** — theo thời lượng/số phần, `-c copy -f segment` tức thì
 6. **Cắt ngắn Video** — theo hh:mm:ss, copy hoặc re-encode chính xác
 7. **Chèn Phông Xanh** — chromakey, preview 1 frame
-8. **Lặp lại Video** — tới tổng thời lượng hoặc số lần, `-stream_loop -c copy`
-9. **Ghép nối Video** — cùng codec = concat copy tức thì, khác codec = tự chuẩn hóa
-10. **Ghép Video Ngẫu Nhiên** — tạo nhiều tổ hợp video tự động
-11. **Ghép Âm Thanh Ngẫu Nhiên** — xuất MP3 mặc định hoặc WAV, chọn thư mục xuất riêng
-12. **Tải Video** — yt-dlp: video/playlist/kênh, chất lượng từng video, cookies, persist danh sách
-13. **Kiểm tra cập nhật** — tự kiểm tra/tải/cài bản app mới + cập nhật `yt-dlp`
+8. **Xóa Nền Ảnh (Photokey)** — xóa phông xanh lá/xanh dương khỏi ảnh tĩnh, xuất PNG trong suốt
+9. **Lặp lại Video** — tới tổng thời lượng hoặc số lần, `-stream_loop -c copy`
+10. **Ghép nối Video** — cùng codec = concat copy tức thì, khác codec = tự chuẩn hóa
+11. **Ghép Video Ngẫu Nhiên** — tạo nhiều tổ hợp video tự động
+12. **Ghép Âm Thanh Ngẫu Nhiên** — xuất MP3 mặc định hoặc WAV, chọn thư mục xuất riêng
+13. **Tải Video** — yt-dlp: video/playlist/kênh, chất lượng từng video, cookies, persist danh sách
+14. **Kiểm tra cập nhật** — tự kiểm tra/tải/cài bản app mới + cập nhật `yt-dlp`
 
 ## Chạy dev
 
