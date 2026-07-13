@@ -237,6 +237,38 @@ if (!app.requestSingleInstanceLock()) {
             }
             console.log('ACCENT_OK')
           }
+          const expectAuthenticatedAtCapture =
+            expectRememberedLogin ||
+            (!!smokeUsername &&
+              !!smokePassword &&
+              process.env.VT_SMOKE_AUTH_EXPECT_EXPIRY !== '1')
+          let mainAuthenticatedAtCapture = true
+          try {
+            authSession.assertAuthenticated()
+          } catch {
+            mainAuthenticatedAtCapture = false
+          }
+          const uiStateAtCapture = await mainWindow!.webContents.executeJavaScript(`(() => ({
+            authenticated: document.querySelector('.app-shell') instanceof HTMLElement,
+            login: document.querySelector('.login-card') instanceof HTMLElement
+          }))()`)
+          const finalAuthStateOk = expectAuthenticatedAtCapture
+            ? mainAuthenticatedAtCapture &&
+              uiStateAtCapture?.authenticated === true &&
+              uiStateAtCapture?.login === false
+            : !mainAuthenticatedAtCapture &&
+              uiStateAtCapture?.authenticated === false &&
+              uiStateAtCapture?.login === true
+          if (!finalAuthStateOk) {
+            throw new Error(
+              `Final authentication smoke failed: ${JSON.stringify({
+                expected: expectAuthenticatedAtCapture,
+                main: mainAuthenticatedAtCapture,
+                ui: uiStateAtCapture
+              })}`
+            )
+          }
+          console.log('AUTH_FINAL_OK')
           await mainWindow!.webContents.executeJavaScript('window.scrollTo(0, 0); document.body.offsetHeight')
           mainWindow!.webContents.invalidate()
           await new Promise<void>((resolve) => setTimeout(resolve, 300))
@@ -245,7 +277,9 @@ if (!app.requestSingleInstanceLock()) {
           mainWindow!.webContents.invalidate()
           await new Promise<void>((resolve) => setTimeout(resolve, 250))
           const img = await mainWindow!.webContents.capturePage()
-          const dir = path.join(app.getAppPath(), '.smoke')
+          const dir = app.isPackaged
+            ? path.join(app.getPath('userData'), 'smoke')
+            : path.join(app.getAppPath(), '.smoke')
           fs.mkdirSync(dir, { recursive: true })
           fs.writeFileSync(path.join(dir, 'screenshot.png'), img.toPNG())
           console.log('SMOKE_OK')
