@@ -1,6 +1,7 @@
 import type {
   AppInfo,
   AppSettings,
+  AuthStatus,
   BinsStatus,
   HwInfo,
   MediaInfo,
@@ -37,6 +38,15 @@ export const on = (channel: string, cb: (data: unknown) => void): (() => void) =
 export const pathForFile = (f: File): string => window.vt.pathForFile(f)
 
 // ---- core wrappers ----
+export const getAuthStatus = (): Promise<AuthStatus> =>
+  invokeSilent('core:auth:status')
+
+export const login = (username: string, password: string): Promise<AuthStatus> =>
+  invokeSilent('core:auth:login', { username, password })
+
+export const logout = (): Promise<AuthStatus> =>
+  invokeSilent('core:auth:logout')
+
 export const pickFiles = (opts?: {
   filters?: { name: string; extensions: string[] }[]
   multi?: boolean

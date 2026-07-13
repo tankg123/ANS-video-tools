@@ -8,6 +8,7 @@ export type AppUpdatePhase =
   | 'available'
   | 'downloading'
   | 'downloaded'
+  | 'installing'
   | 'up-to-date'
   | 'error'
 
@@ -30,11 +31,20 @@ export interface AppUpdateState {
   source: string
   phase: AppUpdatePhase
   current: string
+  /** Có metadata xác nhận một phiên bản mới hơn; không suy luận từ `latest`. */
+  updateAvailable: boolean
   latest?: string
   changelog?: string
   progress?: AppUpdateProgress
   error?: string
   checkedAt?: number
+}
+
+/** Kết quả cổng cập nhật lúc mở app, trước khi bất kỳ phiên đăng nhập nào được bắt đầu. */
+export interface StartupUpdateResult {
+  state: AppUpdateState
+  /** Chỉ true khi app không cần cập nhật, updater không được hỗ trợ, hoặc lần kiểm tra chưa thể kết nối. */
+  readyForLogin: boolean
 }
 
 export const EV_APP_UPDATE_STATE = 'mod:updater:state'

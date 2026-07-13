@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const INVOKE_OK = /^(core|mod):/
-const EVENT_OK = /^(task:|stats:|settings:|toast$|mod:)/
+const EVENT_OK = /^(task:|stats:|settings:|auth:|toast$|mod:)/
 
 export interface VtApi {
   invoke<T = unknown>(channel: string, payload?: unknown): Promise<T>

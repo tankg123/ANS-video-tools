@@ -3,6 +3,7 @@ import type { SystemStats, ToastMsg } from '@shared/types'
 
 export type ModuleKey =
   | 'render'
+  | 'convert'
   | 'remove-audio'
   | 'upscale'
   | 'intro-outro-logo'
@@ -20,6 +21,7 @@ export type ModuleKey =
 const LEGACY_LIVE_MODULES = new Set(['super-live', 'basic-live', 'drive-live'])
 const VALID_MODULES = new Set<ModuleKey>([
   'render',
+  'convert',
   'remove-audio',
   'upscale',
   'intro-outro-logo',

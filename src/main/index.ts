@@ -2,11 +2,11 @@ import { app, BrowserWindow, Menu } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import appIcon from '../../resources/icon.png?asset'
+import { authSession } from './auth-session'
 import { registerCoreIpc } from './core-ipc'
 import { ensureDirs } from './env'
-import { detectHardware } from './hardware'
 import { logger } from './logger'
-import { createModuleContext } from './module-context'
+import { createModuleContext, isProtectedIpcChannel } from './module-context'
 import { registerAllModules } from './modules'
 import { pm } from './process-manager'
 import { settings } from './settings-store'
@@ -75,19 +75,127 @@ if (!app.requestSingleInstanceLock()) {
     queue.applySettingsLimits(s.maxFfmpeg, s.maxDownloads)
 
     const ctx = createModuleContext()
-    registerCoreIpc(ctx, () => mainWindow)
-    registerAllModules(ctx)
+    const modules = registerAllModules(ctx)
+    registerCoreIpc(ctx, () => mainWindow, modules.updater.runStartup)
+
+    // Bắt đầu kiểm tra ngay trong main process, trước khi tạo UI và trước mọi lần xác thực.
+    void modules.updater.runStartup()
 
     createWindow()
     startSystemStats()
 
-    // dò encoder phần cứng nền, không chặn khởi động (spec 5.1)
-    detectHardware().catch(() => {})
-
     if (isSmoke) {
       setTimeout(async () => {
         let previousModule: string | null = null
+        let smokeFailed = false
         try {
+          const expectRememberedLogin = process.env.VT_SMOKE_AUTH_EXPECT_REMEMBERED === '1'
+          const startupUpdate = await mainWindow!.webContents.executeJavaScript(
+            "window.vt.invoke('mod:updater:startup')"
+          )
+          const startupUpdateStateOk = app.isPackaged
+            ? startupUpdate?.state?.supported === true &&
+              startupUpdate?.state?.phase === 'up-to-date'
+            : startupUpdate?.state?.supported === false &&
+              startupUpdate?.state?.phase === 'disabled'
+          const startupUpdateGateOk =
+            startupUpdate?.readyForLogin === true &&
+            startupUpdateStateOk &&
+            !isProtectedIpcChannel('mod:updater:startup') &&
+            isProtectedIpcChannel('mod:updater:state')
+          if (!startupUpdateGateOk) throw new Error('Startup updater gate smoke failed')
+          console.log('STARTUP_UPDATE_GATE_OK')
+          let protectedAccessDenied = false
+          try {
+            authSession.assertAuthenticated()
+          } catch {
+            protectedAccessDenied = true
+          }
+          const loginVisible = await mainWindow!.webContents.executeJavaScript(
+            "document.querySelector('.login-card') instanceof HTMLElement"
+          )
+          const loginDeviceIdHidden = await mainWindow!.webContents.executeJavaScript(`(() => {
+            const card = document.querySelector('.login-card')
+            if (!(card instanceof HTMLElement)) return false
+            const text = card.textContent ?? ''
+            return !card.querySelector('.login-device') &&
+              !card.querySelector('code') &&
+              !text.includes('Mã thiết bị (HWID)') &&
+              !text.includes('Device ID (HWID)')
+          })()`)
+          const protectedChannelsRegistered =
+            isProtectedIpcChannel('core:tasks:list') &&
+            isProtectedIpcChannel('mod:render:start')
+          if (expectRememberedLogin) {
+            const rememberedUiVisible = await mainWindow!.webContents.executeJavaScript(
+              "document.querySelector('.app-shell') instanceof HTMLElement"
+            )
+            if (
+              loginVisible ||
+              protectedAccessDenied ||
+              !rememberedUiVisible ||
+              !protectedChannelsRegistered
+            ) {
+              throw new Error('Remembered authentication smoke failed')
+            }
+            console.log('AUTH_REMEMBERED_OK')
+          } else {
+            if (
+              !loginVisible ||
+              !loginDeviceIdHidden ||
+              !protectedAccessDenied ||
+              !protectedChannelsRegistered
+            ) {
+              throw new Error('Authentication gate smoke failed')
+            }
+            console.log('AUTH_GATE_OK')
+          }
+
+          const smokeUsername = process.env.VT_SMOKE_AUTH_USERNAME
+          const smokePassword = process.env.VT_SMOKE_AUTH_PASSWORD
+          const authenticatedUiRequested = !!(
+            process.env.VT_SMOKE_MODULE ||
+            process.env.VT_SMOKE_SETTINGS === '1' ||
+            process.env.VT_SMOKE_ACCENT_TEST === '1'
+          )
+          if ((smokeUsername && !smokePassword) || (!smokeUsername && smokePassword)) {
+            throw new Error('Smoke authentication requires both username and password')
+          }
+          if (authenticatedUiRequested && !expectRememberedLogin && (!smokeUsername || !smokePassword)) {
+            throw new Error('Authenticated smoke options require VT_SMOKE_AUTH_USERNAME/PASSWORD')
+          }
+          if (smokeUsername && smokePassword) {
+            const loginResult = await mainWindow!.webContents.executeJavaScript(`window.vt.invoke(
+              'core:auth:login',
+              ${JSON.stringify({ username: smokeUsername, password: smokePassword })}
+            )`)
+            if (!loginResult?.authenticated || !loginResult?.account?.expiresAt) {
+              throw new Error('Authentication login smoke failed')
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 350))
+            const authenticatedUiOk = await mainWindow!.webContents.executeJavaScript(`(() => {
+              const expiry = document.querySelector('.user-copy small')?.textContent ?? ''
+              return document.querySelector('.app-shell') instanceof HTMLElement && expiry.length > 5 && !expiry.endsWith('—')
+            })()`)
+            if (!authenticatedUiOk) throw new Error('Authenticated UI smoke failed')
+            console.log('AUTH_LOGIN_OK')
+
+            if (process.env.VT_SMOKE_AUTH_EXPECT_EXPIRY === '1') {
+              await new Promise<void>((resolve) => setTimeout(resolve, 2_500))
+              let expiredAccessDenied = false
+              try {
+                authSession.assertAuthenticated()
+              } catch {
+                expiredAccessDenied = true
+              }
+              const expiredUiOk = await mainWindow!.webContents.executeJavaScript(
+                "document.querySelector('.login-card') instanceof HTMLElement && !document.querySelector('.app-shell')"
+              )
+              if (!expiredUiOk || !expiredAccessDenied) throw new Error('Authentication expiry smoke failed')
+              console.log('AUTH_EXPIRY_OK')
+            }
+          }
+
           const smokeModule = process.env.VT_SMOKE_MODULE
           if (smokeModule) {
             previousModule = await mainWindow!.webContents.executeJavaScript(`(() => {
@@ -142,6 +250,7 @@ if (!app.requestSingleInstanceLock()) {
           fs.writeFileSync(path.join(dir, 'screenshot.png'), img.toPNG())
           console.log('SMOKE_OK')
         } catch (e) {
+          smokeFailed = true
           console.error('SMOKE_FAIL', e)
         } finally {
           if (process.env.VT_SMOKE_MODULE) {
@@ -152,7 +261,7 @@ if (!app.requestSingleInstanceLock()) {
               else localStorage.setItem('vt.activeModule', previous)
             })()`).catch(() => {})
           }
-          app.exit(0)
+          app.exit(smokeFailed ? 1 : 0)
         }
       }, 4000)
     }
@@ -161,6 +270,7 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on('before-quit', () => {
   // không để lại process mồ côi khi thoát app
+  authSession.dispose()
   pm.killAllTracked()
   pm.flushNow()
   settings.flushNow()

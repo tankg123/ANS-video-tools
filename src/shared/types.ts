@@ -74,19 +74,36 @@ export interface SystemStats {
   processingProcesses: number
 }
 
-export interface LicenseInfo {
+/** Tài khoản ANS-Video đã được API xác thực cho đúng thiết bị. */
+export interface AuthAccount {
+  id: number
   username: string
-  key: string
-  /** ISO date hết hạn, null = Không giới hạn */
-  expiry: string | null
-  activatedAt?: number
+  status: 'activate'
+  hwid: string
+  activatedAt: string | null
+  expiresAt: string
+  remainingSeconds: number
+  remainingDays: number
+}
+
+/** Trạng thái phiên hiện tại do main process quản lý; không chứa thông tin đăng nhập đã mã hóa. */
+export interface AuthStatus {
+  authenticated: boolean
+  hwid: string
+  account: AuthAccount | null
+}
+
+export type AuthUpdateReason = 'login' | 'logout' | 'expired'
+
+export interface AuthUpdate {
+  status: AuthStatus
+  reason: AuthUpdateReason
 }
 
 export interface AppSettings {
   language: 'vi' | 'en'
   /** Màu nhấn chính của toàn bộ giao diện, dạng #RRGGBB. */
   accentColor: string
-  license: LicenseInfo
   /** thư mục xuất mặc định cho các module xử lý ('' = cùng thư mục file gốc) */
   outputDir: string
   downloadDir: string
@@ -109,6 +126,7 @@ export const EV_TASK_UPDATE = 'task:update' // TaskInfo[] (snapshot các task th
 export const EV_TASK_REMOVED = 'task:removed' // string[] (ids)
 export const EV_STATS = 'stats:update' // SystemStats mỗi 2s
 export const EV_SETTINGS = 'settings:update' // AppSettings
+export const EV_AUTH = 'auth:update' // AuthUpdate
 export const EV_TOAST = 'toast' // { type: 'info'|'success'|'error', message: string }
 
 export interface ToastMsg {

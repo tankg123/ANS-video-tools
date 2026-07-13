@@ -1,13 +1,17 @@
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AppInfo, AppSettings } from '@shared/types'
+import type { AppInfo, AppSettings, AuthStatus } from '@shared/types'
+import type { StartupUpdateResult } from '@shared/modules/updater'
+import { EV_AUTH } from '@shared/types'
+import { authSession } from './auth-session'
 import { bundledBinDir, userDataDir } from './env'
 import { binsStatus, binVersion, enqueueFetchBinaries } from './binaries'
 import { killAllFfmpeg } from './ffmpeg'
 import { detectHardware } from './hardware'
 import { logger } from './logger'
 import type { ModuleContext } from './module-context'
+import { pm } from './process-manager'
 import { probeFile } from './probe'
 import { settings } from './settings-store'
 import { queue } from './task-queue'
@@ -18,7 +22,44 @@ const VIDEO_FILTERS = [
   { name: 'Tất cả file', extensions: ['*'] }
 ]
 
-export function registerCoreIpc(ctx: ModuleContext, getWin: () => BrowserWindow | null): void {
+export function registerCoreIpc(
+  ctx: ModuleContext,
+  getWin: () => BrowserWindow | null,
+  runStartupUpdate: () => Promise<StartupUpdateResult>
+): void {
+  const unsubscribeAuth = authSession.subscribe((update) => {
+    if (update.reason === 'logout' || update.reason === 'expired') {
+      queue.cancelPools(['ffmpeg', 'download', 'misc'])
+      pm.killAllTracked()
+    }
+    ctx.send(EV_AUTH, update)
+  })
+  app.once('before-quit', unsubscribeAuth)
+
+  const waitUntilLoginIsAllowed = async (): Promise<void> => {
+    const result = await runStartupUpdate()
+    if (result.readyForLogin) return
+    throw new Error(
+      result.state.error ||
+      'Ứng dụng cần hoàn tất cập nhật phiên bản mới trước khi đăng nhập.'
+    )
+  }
+
+  // ---- authentication (public IPC; quyền sử dụng chỉ được giữ trong main process) ----
+  ctx.handle('core:auth:status', async (): Promise<AuthStatus> => {
+    await waitUntilLoginIsAllowed()
+    return authSession.initialize()
+  }, { public: true })
+  ctx.handle(
+    'core:auth:login',
+    async (p: { username: string; password: string }) => {
+      await waitUntilLoginIsAllowed()
+      return authSession.login(p)
+    },
+    { public: true }
+  )
+  ctx.handle('core:auth:logout', (): AuthStatus => authSession.logout(), { public: true })
+
   // ---- dialogs ----
   ctx.handle('core:dialog:openFiles', async (p: { filters?: { name: string; extensions: string[] }[]; multi?: boolean } = {}) => {
     const win = getWin()
@@ -45,9 +86,12 @@ export function registerCoreIpc(ctx: ModuleContext, getWin: () => BrowserWindow 
   })
 
   // ---- settings / license ----
-  ctx.handle('core:settings:get', () => settings.all())
+  ctx.handle('core:settings:get', () => settings.all(), { public: true })
   ctx.handle('core:settings:set', (patch: Partial<AppSettings>) => {
-    const s = settings.set(patch)
+    // Dữ liệu license cục bộ cũ không còn là nguồn cấp quyền và không được phép ghi qua IPC.
+    const safePatch: Partial<AppSettings> & Record<string, unknown> = { ...patch }
+    delete safePatch['license']
+    const s = settings.set(safePatch)
     queue.applySettingsLimits(s.maxFfmpeg, s.maxDownloads)
     if (typeof patch.autoStart === 'boolean') {
       try {
@@ -57,17 +101,6 @@ export function registerCoreIpc(ctx: ModuleContext, getWin: () => BrowserWindow 
       }
     }
     return s
-  })
-
-  // License cục bộ (stub — chưa có máy chủ): key chứa ngày YYYY-MM-DD → HSD ngày đó,
-  // key khác/rỗng → Không giới hạn. Giữ chỗ cho tích hợp server + offline grace 3 ngày.
-  ctx.handle('core:license:set', (p: { username: string; key: string }) => {
-    const m = /(\d{4}-\d{2}-\d{2})/.exec(p.key ?? '')
-    const expiry = m ? m[1] : null
-    const s = settings.set({
-      license: { username: p.username?.trim() || 'User', key: p.key ?? '', expiry, activatedAt: Date.now() }
-    })
-    return s.license
   })
 
   // ---- kv (persist module) ----

@@ -187,11 +187,19 @@ export default function register(ctx: ModuleContext): void {
   const startDrafts = async (p: RandomStartPayload): Promise<string[]> => {
     const jobs = Array.isArray(p?.jobs) ? p.jobs : []
     if (!jobs.length) throw new Error('Chưa có bản ghép nào — hãy "Trộn ngẫu nhiên" trước')
+    const outputDir = p.outputDir?.trim() || undefined
+    if (outputDir) {
+      try {
+        if (!fs.statSync(outputDir).isDirectory()) throw new Error()
+      } catch {
+        throw new Error('Thư mục xuất không tồn tại hoặc không truy cập được')
+      }
+    }
     // Hai pha: probe + validate + dựng spec cho TẤT CẢ bản trước; nếu một bản lỗi thì reject
     // trước khi enqueue bất kỳ task nào (all-or-nothing).
     const built = await Promise.allSettled(
       jobs.map((inputs, i) =>
-        buildSpec(ctx, inputs, !!p.forceReencode, p.outputDir, jobs.length > 1 ? i + 1 : 0)
+        buildSpec(ctx, inputs, !!p.forceReencode, outputDir, jobs.length > 1 ? i + 1 : 0)
       )
     )
     const failed = built.find((result) => result.status === 'rejected')

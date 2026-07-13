@@ -14,7 +14,7 @@ export interface ModuleDef {
 }
 
 /**
- * Registry 14 module. Lazy-load: chỉ mount UI tab đang mở.
+ * Registry 15 module. Lazy-load: chỉ mount UI tab đang mở.
  * Thứ tự = thứ tự sidebar; 'updater' luôn ghim dưới cùng.
  */
 export const MODULES: ModuleDef[] = [
@@ -25,6 +25,14 @@ export const MODULES: ModuleDef[] = [
     icon: 'render',
     group: 'processing',
     Component: lazy(() => import('./render/Render'))
+  },
+  {
+    key: 'convert',
+    vi: 'Chuyển đổi định dạng',
+    en: 'Format Converter',
+    icon: 'convert',
+    group: 'processing',
+    Component: lazy(() => import('./convert/Convert'))
   },
   {
     key: 'remove-audio',

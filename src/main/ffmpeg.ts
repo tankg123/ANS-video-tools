@@ -15,6 +15,11 @@ export interface FfmpegTaskOptions {
   durationSec?: number
   pool?: TaskPool
   outputPath?: string
+  /**
+   * File tạm mà FFmpeg thực sự ghi. Sau exit code 0, helper đổi tên file này
+   * thành outputPath; khi lỗi/hủy, file tạm luôn bị xóa.
+   */
+  stagingOutputPath?: string
   meta?: Record<string, unknown>
   cwd?: string
   /** không tự thêm -y (vd lệnh không ghi file) */
@@ -49,6 +54,9 @@ export function runProcessTask(
  * - log từng dòng vào logs/<taskId>.log
  */
 export function enqueueFfmpeg(o: FfmpegTaskOptions): string {
+  if (o.stagingOutputPath && !o.outputPath) {
+    throw new Error('stagingOutputPath yêu cầu outputPath đích')
+  }
   return queue.add({
     type: o.type,
     title: o.title,
@@ -56,8 +64,12 @@ export function enqueueFfmpeg(o: FfmpegTaskOptions): string {
     meta: o.meta,
     onSettled: async () => {
       releaseOutput(o.outputPath)
+      const cleanupPaths = [
+        ...(o.cleanupPaths ?? []),
+        ...(o.stagingOutputPath ? [o.stagingOutputPath] : [])
+      ]
       await Promise.all(
-        (o.cleanupPaths ?? []).map((filePath) =>
+        cleanupPaths.map((filePath) =>
           fs.promises.rm(filePath, { force: true }).catch(() => {})
         )
       )
@@ -93,6 +105,9 @@ export function enqueueFfmpeg(o: FfmpegTaskOptions): string {
         })
         if (api.isCancelled()) return
         if (code !== 0) throw new Error(`FFmpeg thoát mã ${code}: ${lastLine}`)
+        if (o.stagingOutputPath && o.outputPath) {
+          await fs.promises.rename(o.stagingOutputPath, o.outputPath)
+        }
       } finally {
         log.close()
       }

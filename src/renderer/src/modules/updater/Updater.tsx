@@ -254,7 +254,7 @@ export default function Updater(): React.JSX.Element {
         {updatePhase === 'error' && (
           <div className="mt">
             <span className="text-danger">❌ {update?.error}</span>
-            {update?.latest && (
+            {update?.updateAvailable && (
               <button
                 className="btn btn-sm mt"
                 disabled={updateBusy}

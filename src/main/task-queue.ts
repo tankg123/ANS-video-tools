@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import type { TaskInfo, TaskPool, TaskStatus } from '@shared/types'
 import { EV_TASK_REMOVED, EV_TASK_UPDATE } from '@shared/types'
+import { authSession } from './auth-session'
 
 export interface TaskApi {
   id: string
@@ -64,6 +65,8 @@ export class TaskQueue {
   }
 
   add(opts: AddTaskOptions): string {
+    // Chặn cả trường hợp một handler dài hoàn tất sau khi phiên vừa hết hạn.
+    authSession.assertAuthenticated()
     const id = randomUUID()
     const info: TaskInfo = {
       id,

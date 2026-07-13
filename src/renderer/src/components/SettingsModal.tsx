@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppSettings, HwInfo } from '@shared/types'
 import { ACCENT_PRESETS, DEFAULT_ACCENT_COLOR } from '@shared/theme'
-import { getHw, invoke } from '../api'
+import { getHw } from '../api'
 import { useT } from '../i18n'
+import { useAuth } from '../store/auth'
 import { useSettings } from '../store/settings'
 import { useUi } from '../store/ui'
 import { Check, Field, FolderInput, NumInput, Select } from './Field'
@@ -16,27 +17,22 @@ export function SettingsModal(): React.JSX.Element | null {
   const pushToast = useUi((s) => s.pushToast)
   const settings = useSettings((s) => s.settings)
   const update = useSettings((s) => s.update)
+  const account = useAuth((s) => s.status?.account)
 
   const [draft, setDraft] = useState<AppSettings | null>(null)
   const [hw, setHw] = useState<HwInfo | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [showKey, setShowKey] = useState(false)
-  const [licUser, setLicUser] = useState('')
-  const [licKey, setLicKey] = useState('')
   const initialized = useRef(false)
 
   useEffect(() => {
     if (!open) {
       initialized.current = false
-      setShowKey(false)
       return
     }
     if (!settings || initialized.current) return
     initialized.current = true
     setDraft({ ...settings })
-    setLicUser(settings.license.username)
-    setLicKey(settings.license.key)
     void getHw().then(setHw).catch(() => {})
   }, [open, settings])
 
@@ -49,9 +45,7 @@ export function SettingsModal(): React.JSX.Element | null {
     draft.maxDownloads !== settings.maxDownloads ||
     draft.encoderPref !== settings.encoderPref ||
     draft.autoStart !== settings.autoStart ||
-    draft.accentColor !== settings.accentColor ||
-    licUser !== settings.license.username ||
-    licKey !== settings.license.key
+    draft.accentColor !== settings.accentColor
   )
 
   const requestClose = (): void => {
@@ -80,11 +74,6 @@ export function SettingsModal(): React.JSX.Element | null {
         autoStart: draft.autoStart,
         accentColor: draft.accentColor
       })
-      if (licUser !== settings?.license.username || licKey !== settings?.license.key) {
-        await invoke('core:license:set', { username: licUser, key: licKey })
-        const latest = await invoke<AppSettings>('core:settings:get')
-        useSettings.getState().apply(latest)
-      }
       pushToast('success', t('Đã lưu cài đặt', 'Settings saved'))
       setOpen(false)
     } catch {
@@ -182,31 +171,30 @@ export function SettingsModal(): React.JSX.Element | null {
           <header>
             <span><Icon name="user" size={18} /></span>
             <div>
-              <strong>{t('Hồ sơ & bản quyền', 'Profile & license')}</strong>
-              <small>{t('Thông tin hiển thị trên thiết bị này', 'Identity shown on this device')}</small>
+              <strong>{t('Tài khoản & bản quyền', 'Account & license')}</strong>
+              <small>{t('Thông tin được xác thực từ máy chủ', 'Server-verified license details')}</small>
             </div>
           </header>
-          <Field label={t('Tên hiển thị', 'Display name')}>
-            <input className="input" value={licUser} onChange={(event) => setLicUser(event.target.value)} />
-          </Field>
-          <Field
-            label={t('License key', 'License key')}
-            hint={t('Key chứa ngày YYYY-MM-DD sẽ đặt hạn sử dụng; để trống = không giới hạn.', 'A key containing YYYY-MM-DD sets expiry; empty means unlimited.')}
-          >
-            <div className="input-row">
-              <input
-                className="input mono"
-                type={showKey ? 'text' : 'password'}
-                value={licKey}
-                autoComplete="off"
-                onChange={(event) => setLicKey(event.target.value)}
-              />
-              <button className="btn" onClick={() => setShowKey((value) => !value)}>
-                <Icon name="shield" size={15} />
-                {showKey ? t('Ẩn', 'Hide') : t('Hiện', 'Show')}
-              </button>
+          <div className="license-summary">
+            <div>
+              <span>{t('Tài khoản', 'Username')}</span>
+              <strong>{account?.username || '—'}</strong>
             </div>
-          </Field>
+            <div>
+              <span>{t('Ngày hết hạn', 'Expires at')}</span>
+              <strong>{account?.expiresAt
+                ? new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(account.expiresAt))
+                : '—'}</strong>
+            </div>
+            <div>
+              <span>{t('Thời gian còn lại', 'Time remaining')}</span>
+              <strong>{account ? t(`${account.remainingDays} ngày`, `${account.remainingDays} days`) : '—'}</strong>
+            </div>
+            <div>
+              <span>{t('Mã thiết bị', 'Device ID')}</span>
+              <code>{account?.hwid || '—'}</code>
+            </div>
+          </div>
         </section>
 
         <section className="settings-section">

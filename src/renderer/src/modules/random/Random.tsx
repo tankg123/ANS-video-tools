@@ -4,7 +4,7 @@ import type { MediaInfo } from '@shared/types'
 import type { RandomStartPayload } from '@shared/modules/random'
 import { fmtBytes, secToHms } from '@shared/time'
 import { cleanError, invokeSilent, kvGet, kvSet, probe } from '../../api'
-import { Check, Field, NumInput } from '../../components/Field'
+import { Check, Field, FolderInput, NumInput } from '../../components/Field'
 import { FileDrop } from '../../components/FileDrop'
 import { MergeDraftQueue, type MergeDraftBase } from '../../components/MergeDraftQueue'
 import { TaskTable } from '../../components/TaskTable'
@@ -32,6 +32,7 @@ interface RandomDraft extends MergeDraftBase {
 
 const KV_NAMESPACE = 'random'
 const DRAFTS_KEY = 'drafts-v1'
+const OUTPUT_DIR_KEY = 'outputDir'
 const VIEW_MODE_KEY = 'view-mode'
 
 function parseDrafts(value: unknown): RandomDraft[] {
@@ -176,9 +177,10 @@ function shuffle<T>(arr: T[]): T[] {
 export default function Random(): React.JSX.Element {
   const t = useT()
   const pushToast = useUi((s) => s.pushToast)
-  const outputDir = useSettings((s) => s.settings?.outputDir ?? '')
+  const defaultOutputDir = useSettings((s) => s.settings?.outputDir ?? '')
 
   const [tiles, setTiles] = useState<Tile[]>([])
+  const [outputDir, setOutputDir] = useState(defaultOutputDir)
   const [leadCount, setLeadCount] = useState(1)
   const [outCount, setOutCount] = useState(3)
   const [variants, setVariants] = useState(1)
@@ -190,6 +192,7 @@ export default function Random(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<MediaViewMode>('grid')
   const [submittingIds, setSubmittingIds] = useState<Set<string>>(() => new Set())
   const submittingRef = useRef(new Set<string>())
+  const outputDirEditedRef = useRef(false)
   const viewModeEditedRef = useRef(false)
 
   const [dragOver, setDragOver] = useState<number | null>(null)
@@ -202,6 +205,18 @@ export default function Random(): React.JSX.Element {
   useEffect(() => {
     ensureRandomDraftsLoaded()
   }, [])
+
+  useEffect(() => {
+    let active = true
+    void kvGet<string>(KV_NAMESPACE, OUTPUT_DIR_KEY, defaultOutputDir)
+      .then((saved) => {
+        if (active && !outputDirEditedRef.current) setOutputDir(saved)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [defaultOutputDir])
 
   useEffect(() => {
     let active = true
@@ -221,6 +236,12 @@ export default function Random(): React.JSX.Element {
     viewModeEditedRef.current = true
     setViewMode(value)
     void kvSet(KV_NAMESPACE, VIEW_MODE_KEY, value).catch(() => undefined)
+  }
+
+  const changeOutputDir = (value: string): void => {
+    outputDirEditedRef.current = true
+    setOutputDir(value)
+    void kvSet(KV_NAMESPACE, OUTPUT_DIR_KEY, value).catch(() => undefined)
   }
 
   // Limiter bền vững theo vòng đời component.
@@ -626,6 +647,20 @@ export default function Random(): React.JSX.Element {
           </Field>
         </div>
 
+        <Field
+          label={t('Thư mục xuất', 'Output folder')}
+          hint={t(
+            'Để trống sẽ lưu cạnh video đầu tiên của mỗi bản. Thư mục được ghi nhớ và áp dụng cho các bản ghép tạo mới.',
+            'Leave empty to save next to the first video of each merge. The folder is remembered and applies to newly created merges.'
+          )}
+        >
+          <FolderInput
+            value={outputDir}
+            onChange={changeOutputDir}
+            placeholder={t('Cạnh video nguồn', 'Next to the source video')}
+          />
+        </Field>
+
         <div className="row mt">
           <Check
             checked={forceReencode}
@@ -729,8 +764,8 @@ export default function Random(): React.JSX.Element {
                 ? t('Chuẩn hoá bật', 'Normalize on')
                 : t('Tự chọn chế độ ghép', 'Auto merge mode')}
             </span>
-            <span className="ellipsis" title={draft.outputDir || t('Thư mục đầu ra mặc định', 'Default output folder')}>
-              {t('Đầu ra', 'Output')}: {draft.outputDir || t('Mặc định', 'Default')}
+            <span className="ellipsis" title={draft.outputDir || t('Cạnh video đầu tiên', 'Next to the first video')}>
+              {t('Đầu ra', 'Output')}: {draft.outputDir || t('Cạnh video đầu tiên', 'Next to the first video')}
             </span>
           </div>
         )}

@@ -4,7 +4,7 @@ import logoUrl from '../assets/ans-logo.png'
 import { killAllFfmpeg } from '../api'
 import { useT } from '../i18n'
 import { MODULES } from '../modules/registry'
-import { useSettings } from '../store/settings'
+import { useAuth } from '../store/auth'
 import { useTasks } from '../store/tasks'
 import { useUi } from '../store/ui'
 import { Icon } from './Icon'
@@ -13,7 +13,8 @@ import { Modal } from './Modal'
 export function Header(): React.JSX.Element {
   const t = useT()
   const active = useUi((s) => s.active)
-  const license = useSettings((s) => s.settings?.license)
+  const account = useAuth((s) => s.status?.account)
+  const logout = useAuth((s) => s.logout)
   const setSettingsOpen = useUi((s) => s.setSettingsOpen)
   const pushToast = useUi((s) => s.pushToast)
   const activity = useTasks(
@@ -31,18 +32,19 @@ export function Header(): React.JSX.Element {
   )
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [killing, setKilling] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
 
   const currentModule = MODULES.find((module) => module.key === active) ?? MODULES[0]
   const activeJobs = activity.running + activity.queued
-  const username = license?.username?.trim() || 'ANS User'
+  const username = account?.username?.trim() || 'ANS User'
   const initials = username
     .split(/\s+/)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join('')
-  const expiry = license?.expiry
-    ? new Date(license.expiry).toLocaleDateString('vi-VN')
-    : t('Không giới hạn', 'Unlimited')
+  const expiry = account?.expiresAt
+    ? new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(account.expiresAt))
+    : '—'
 
   const doKill = async (): Promise<void> => {
     setKilling(true)
@@ -58,6 +60,21 @@ export function Header(): React.JSX.Element {
       setConfirmOpen(false)
     } finally {
       setKilling(false)
+    }
+  }
+
+  const doLogout = async (): Promise<void> => {
+    if (
+      activeJobs > 0 &&
+      !window.confirm(t('Đăng xuất sẽ dừng toàn bộ tác vụ đang chạy và đang chờ. Tiếp tục?', 'Signing out will stop every running and queued task. Continue?'))
+    ) return
+    setLoggingOut(true)
+    try {
+      await logout()
+    } catch (error) {
+      pushToast('error', error instanceof Error ? error.message : String(error))
+    } finally {
+      setLoggingOut(false)
     }
   }
 
@@ -115,6 +132,15 @@ export function Header(): React.JSX.Element {
           onClick={() => setSettingsOpen(true)}
         >
           <Icon name="settings" size={18} />
+        </button>
+        <button
+          className="btn btn-icon btn-ghost logout-trigger"
+          disabled={loggingOut}
+          title={t('Đăng xuất', 'Sign out')}
+          aria-label={t('Đăng xuất', 'Sign out')}
+          onClick={() => void doLogout()}
+        >
+          {loggingOut ? <span className="spin" /> : <Icon name="log-out" size={18} />}
         </button>
       </div>
 

@@ -4,6 +4,7 @@ import { binsStatus, binVersion, resolveBin } from './binaries'
 import type { BinTool } from './binaries'
 import { enqueueFfmpeg, enqueueYtdlp, FfmpegTaskOptions, YtdlpTaskOptions } from './ffmpeg'
 import { detectHardware, pickEncoder } from './hardware'
+import { authSession } from './auth-session'
 import { logger } from './logger'
 import { pm, ProcessManager } from './process-manager'
 import { probeFile } from './probe'
@@ -17,8 +18,12 @@ import { deriveOutput, isVideoFile, scanVideoDir, writeTempFile, concatEscape } 
  * và đăng ký các IPC channel dạng 'mod:<key>:<action>'.
  */
 export interface ModuleContext {
-  /** ipcMain.handle có guard trùng channel */
-  handle(channel: string, fn: (payload: never) => unknown): void
+  /** ipcMain.handle có guard trùng channel và yêu cầu phiên đăng nhập theo mặc định. */
+  handle(
+    channel: string,
+    fn: (payload: never) => unknown,
+    options?: { public?: boolean }
+  ): void
   /** gửi event chủ động về renderer */
   send(channel: string, data: unknown): void
 
@@ -48,20 +53,35 @@ export interface ModuleContext {
 }
 
 const registered = new Set<string>()
+const publicChannels = new Set<string>()
+
+/** Chỉ dùng cho smoke test để phát hiện channel vô tình bị đánh dấu public. */
+export function isProtectedIpcChannel(channel: string): boolean {
+  return registered.has(channel) && !publicChannels.has(channel)
+}
 
 export function createModuleContext(): ModuleContext {
   return {
-    handle: (channel, fn) => {
+    handle: (channel, fn, options) => {
       if (registered.has(channel)) {
         console.warn(`IPC channel đăng ký trùng, bỏ qua: ${channel}`)
         return
       }
       registered.add(channel)
-      ipcMain.handle(channel, (_e, payload) => fn(payload as never))
+      if (options?.public) publicChannels.add(channel)
+      ipcMain.handle(channel, async (_e, payload) => {
+        if (!options?.public) authSession.assertAuthenticated()
+        return fn(payload as never)
+      })
     },
     send: (channel, data) => {
       for (const w of BrowserWindow.getAllWindows()) {
-        if (!w.isDestroyed()) w.webContents.send(channel, data)
+        if (w.isDestroyed()) continue
+        try {
+          w.webContents.send(channel, data)
+        } catch {
+          // Cửa sổ có thể bị đóng giữa lúc kiểm tra và gửi event.
+        }
       }
     },
     queue,

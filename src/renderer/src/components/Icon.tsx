@@ -7,6 +7,7 @@ export type IconName =
   | 'check'
   | 'chevron-right'
   | 'cpu'
+  | 'convert'
   | 'download'
   | 'external'
   | 'file-text'
@@ -16,6 +17,7 @@ export type IconName =
   | 'inbox'
   | 'layers'
   | 'list'
+  | 'log-out'
   | 'memory'
   | 'merge'
   | 'palette'
@@ -57,6 +59,12 @@ const CONTENT: Record<IconName, ReactNode> = {
     <>
       <rect x="7" y="7" width="10" height="10" rx="2" />
       <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3M10 10h4v4h-4z" />
+    </>
+  ),
+  convert: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9h9m-3-3 3 3-3 3M17 15H8m3-3-3 3 3 3" />
     </>
   ),
   download: (
@@ -116,6 +124,12 @@ const CONTENT: Record<IconName, ReactNode> = {
     <>
       <path d="M9 6h12M9 12h12M9 18h12" />
       <path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth="3" />
+    </>
+  ),
+  'log-out': (
+    <>
+      <path d="M10 17l5-5-5-5M15 12H3" />
+      <path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5" />
     </>
   ),
   memory: (

@@ -14,7 +14,6 @@ function defaults(): AppSettings {
   return {
     language: 'vi',
     accentColor: DEFAULT_ACCENT_COLOR,
-    license: { username: 'User', key: '', expiry: null },
     outputDir: '',
     downloadDir: path.join(os.homedir(), 'Downloads'),
     maxFfmpeg: Math.max(1, Math.floor(os.cpus().length / 2)),
@@ -42,25 +41,16 @@ const ENCODERS = new Set<AppSettings['encoderPref']>(['auto', 'nvenc', 'qsv', 'a
 function normalizeSettings(value: unknown): AppSettings {
   const base = defaults()
   const merged = deepMerge(base, value)
-  const license = isPlainObject(merged.license) ? merged.license : base.license
   return {
-    ...merged,
     language: merged.language === 'en' ? 'en' : 'vi',
     accentColor: normalizeAccentColor(merged.accentColor),
-    license: {
-      username: typeof license.username === 'string' ? license.username.slice(0, 120) : base.license.username,
-      key: typeof license.key === 'string' ? license.key.slice(0, 1000) : '',
-      expiry: typeof license.expiry === 'string' ? license.expiry : null,
-      activatedAt: typeof license.activatedAt === 'number' && Number.isFinite(license.activatedAt)
-        ? license.activatedAt
-        : undefined
-    },
     outputDir: typeof merged.outputDir === 'string' ? merged.outputDir : '',
     downloadDir: typeof merged.downloadDir === 'string' ? merged.downloadDir : base.downloadDir,
     maxFfmpeg: Math.min(16, Math.max(1, Math.floor(Number(merged.maxFfmpeg) || base.maxFfmpeg))),
     maxDownloads: Math.min(10, Math.max(1, Math.floor(Number(merged.maxDownloads) || base.maxDownloads))),
     encoderPref: ENCODERS.has(merged.encoderPref) ? merged.encoderPref : 'auto',
-    autoStart: merged.autoStart === true
+    autoStart: merged.autoStart === true,
+    hw: merged.hw
   }
 }
 
@@ -103,7 +93,7 @@ export class SettingsStore {
     try {
       if (fs.existsSync(FILE)) {
         const saved = JSON.parse(fs.readFileSync(FILE, 'utf8')) as Record<string, unknown>
-        for (const legacyKey of ['maxLive', 'updateUrl']) {
+        for (const legacyKey of ['maxLive', 'updateUrl', 'license']) {
           if (legacyKey in saved) {
             delete saved[legacyKey]
             settingsMigrated = true
